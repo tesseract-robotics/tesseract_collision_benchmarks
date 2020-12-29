@@ -19,6 +19,8 @@
   <depend>moveit_ros_planning_interface</depend>
   <depend>random_numbers</depend>
   <depend>libconsole-bridge-dev</depend>
+  <exec_depend>moveit_resources</exec_depend>
+  <exec_depend>moveit_resources_panda_moveit_config</exec_depend>
 
   <test_depend>gtest</test_depend>
   <test_depend>tesseract_scene_graph</test_depend>

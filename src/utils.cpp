@@ -33,7 +33,7 @@ void clutterWorld(std::vector<tesseract_geometry::Geometry::ConstPtr>& shapes,
   std::string name;
   shapes::ShapeConstPtr shape;
   tesseract_geometry::Geometry::Ptr t_shape;
-  std::string kinect = "package://moveit_resources/panda_description/meshes/collision/link5.stl";
+  std::string kinect = "package://moveit_resources_panda_description/meshes/collision/link5.stl";
 
   Eigen::Quaterniond quat;
   Eigen::Isometry3d pos{ Eigen::Isometry3d::Identity() };

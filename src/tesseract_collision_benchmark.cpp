@@ -44,7 +44,7 @@
 #include <tesseract_collision/core/discrete_contact_manager.h>
 #include <tesseract_scene_graph/graph.h>
 #include <tesseract_urdf/urdf_parser.h>
-#include <tesseract_environment/kdl/kdl_env.h>
+#include <tesseract_environment/ofkt/ofkt_state_solver.h>
 #include <tesseract_rosutils/utils.h>
 #include <tesseract_collision/bullet/bullet_discrete_bvh_manager.h>
 #include <tesseract_collision/bullet/bullet_discrete_simple_manager.h>
@@ -149,7 +149,8 @@ void runTesseractCollisionDetection(const std::string& name,
                                     const std::vector<tesseract_common::TransformMap>& states,
                                     tesseract_collision::ContactTestType test_type,
                                     bool distance = false,
-                                    bool contacts = false)
+                                    bool contacts = false,
+                                    bool is_physx = false)
 {
 //  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
 //      scene->getRobotModel()->getLinkModelNames(), true) };
@@ -163,15 +164,33 @@ void runTesseractCollisionDetection(const std::string& name,
   req.calculate_distance = distance;
   req.calculate_penetration = contacts;
 
-
   ros::WallTime start = ros::WallTime::now();
-  for (unsigned int i = 0; i < trials; ++i)
+  if (is_physx)
   {
+    // Physx requires that all active links be set prior to contact test, because in physx links can go to
+    // sleep if they have not moved in 3-4 contact test requests.
+    for (unsigned int i = 0; i < trials; ++i)
+    {
+      for (auto& state : states)
+      {
+        res.clear();
+        checker.setCollisionObjectsTransform(state);
+        checker.contactTest(res, req);
+      }
+    }
+  }
+  else
+  {
+    // This is more representative of moveit because the state transforms only get updated the first time it is
+    // called and does not update them for subsequent request becasuse the joint values have not change
     for (auto& state : states)
     {
-      res.clear();
       checker.setCollisionObjectsTransform(state);
-      checker.contactTest(res, req);
+      for (unsigned int i = 0; i < trials; ++i)
+      {
+        res.clear();
+        checker.contactTest(res, req);
+      }
     }
   }
 
@@ -217,11 +236,11 @@ int main(int argc, char** argv)
   // SETUP TESSERACT ENVIRONMENT
   // ************************************************
   auto locator = std::make_shared<tesseract_rosutils::ROSResourceLocator>();
-  auto urdf = locator->locateResource("package://moveit_resources/panda_description/urdf/panda.urdf");
-  auto scene_graph = std::make_shared<tesseract_scene_graph::SceneGraph>();
-  tesseract_urdf::parseURDFFile(scene_graph, urdf->getFilePath(), locator);
-  tesseract_environment::KDLEnv tesseract_env;
-  tesseract_env.init(scene_graph);
+  auto urdf = locator->locateResource("package://moveit_resources_panda_description/urdf/panda.urdf");
+//  auto scene_graph = std::make_shared<tesseract_scene_graph::SceneGraph>();
+//  tesseract_urdf::parseURDFFile(scene_graph, urdf->getFilePath(), locator);
+  tesseract_environment::Environment tesseract_env;
+  tesseract_env.init<tesseract_environment::OFKTStateSolver>(boost::filesystem::path(urdf->getFilePath()), locator);
   tesseract_env.registerDiscreteContactManager("BulletDiscreteBVHManager", &tesseract_collision::tesseract_collision_bullet::BulletDiscreteBVHManager::create);
   tesseract_env.registerDiscreteContactManager("BulletDiscreteSimpleManager", &tesseract_collision::tesseract_collision_bullet::BulletDiscreteSimpleManager::create);
   tesseract_env.registerDiscreteContactManager("FCLDiscreteBVHManager", &tesseract_collision::tesseract_collision_fcl::FCLDiscreteBVHManager::create);
@@ -255,10 +274,10 @@ int main(int argc, char** argv)
   fcl_bvh_checker->addCollisionObject("world", 0, shapes, shape_poses);
   physx_bvh_checker->addCollisionObject("world", 0, shapes, shape_poses);
 
-  bullet_bvh_checker->setContactDistanceThreshold(0);
-  bullet_simple_checker->setContactDistanceThreshold(0);
-  fcl_bvh_checker->setContactDistanceThreshold(0);
-  physx_bvh_checker->setContactDistanceThreshold(0);
+  bullet_bvh_checker->setDefaultCollisionMarginData(0);
+  bullet_simple_checker->setDefaultCollisionMarginData(0);
+  fcl_bvh_checker->setDefaultCollisionMarginData(0);
+  physx_bvh_checker->setDefaultCollisionMarginData(0);
 
   bullet_bvh_checker->setActiveCollisionObjects(link_names);
   bullet_simple_checker->setActiveCollisionObjects(link_names);
@@ -285,13 +304,14 @@ int main(int argc, char** argv)
     t_sampled_states.push_back(t_env_state->link_transforms);
   }
 
-  bullet_bvh_checker->setContactDistanceThreshold(0);
-  bullet_simple_checker->setContactDistanceThreshold(0);
-  fcl_bvh_checker->setContactDistanceThreshold(0);
-  physx_bvh_checker->setContactDistanceThreshold(0);
+  bullet_bvh_checker->setDefaultCollisionMarginData(0);
+  bullet_simple_checker->setDefaultCollisionMarginData(0);
+  fcl_bvh_checker->setDefaultCollisionMarginData(0);
+  physx_bvh_checker->setDefaultCollisionMarginData(0);
   ROS_INFO("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %u out of %u states in collision", states_in_collision, 50);
   ROS_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
-//    runCollisionDetection(trials, planning_scene, sampled_states_2, CollisionDetector::BULLET, true);
+//  runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::BULLET, tesseract_collision::ContactTestType::FIRST, false, false);
+//  runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::BULLET, tesseract_collision::ContactTestType::ALL, false, false);
   runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::FCL, tesseract_collision::ContactTestType::FIRST, false, false);
   runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::FCL, tesseract_collision::ContactTestType::ALL, false, false);
   runTesseractCollisionDetection("BulletDiscreteBVHManager", trials, *bullet_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false);
@@ -303,9 +323,9 @@ int main(int argc, char** argv)
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false, true);
 
   ROS_INFO("Starting benchmark: Robot in cluttered world, in collision with world, %u out of %u states in collision", states_in_collision, 50);
   ROS_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
@@ -321,16 +341,16 @@ int main(int argc, char** argv)
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, true);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, true, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true, true);
 
-  ROS_INFO("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled), %u out of %u states in collision", states_in_collision, t_sampled_states.size());
+  ROS_INFO("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, 0.2m), %u out of %u states in collision", states_in_collision, t_sampled_states.size());
   ROS_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
-  bullet_bvh_checker->setContactDistanceThreshold(0.2);
-  bullet_simple_checker->setContactDistanceThreshold(0.2);
-  fcl_bvh_checker->setContactDistanceThreshold(0.2);
-  physx_bvh_checker->setContactDistanceThreshold(0.2);
+  bullet_bvh_checker->setDefaultCollisionMarginData(0.2);
+  bullet_simple_checker->setDefaultCollisionMarginData(0.2);
+  fcl_bvh_checker->setDefaultCollisionMarginData(0.2);
+  physx_bvh_checker->setDefaultCollisionMarginData(0.2);
 //  runCollisionDetection(trials, planning_scene, sampled_states, CollisionDetector::BULLET, true, true);
 //  runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::FCL, tesseract_collision::ContactTestType::FIRST, true, true);
 //  runCollisionDetection(trials, planning_scene, sampled_states, tesseract_collision::CollisionDetector::FCL, tesseract_collision::ContactTestType::ALL, true, true);
@@ -343,9 +363,9 @@ int main(int argc, char** argv)
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, true);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true);
   runTesseractCollisionDetection("FCLDiscreteBVHManager", trials, *fcl_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true);
-  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, true, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true, true);
+  runTesseractCollisionDetection("PhysxDiscreteManager", trials, *physx_bvh_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true, true);
 
   bool visualize;
   node_handle.getParam("/compare_collision_checking_speed/visualization", visualize);
