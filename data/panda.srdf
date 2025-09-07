@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="panda">
+
+  <!--Contact Managers plugins -->
+  <contact_managers_plugin_config filename="package://tesseract_collision_benchmarks/data/contact_manager_plugins.yaml"/>
+
+</robot>

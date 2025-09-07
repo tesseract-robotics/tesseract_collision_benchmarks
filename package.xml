@@ -1,24 +1,25 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>tesseract_collision_benchmark</name>
+  <name>tesseract_collision_benchmarks</name>
   <version>0.1.0</version>
   <description>The Tesseract Collision Benchmarking package</description>
   <maintainer email="Levi.Armstrong@swri.org">Levi Armstrong</maintainer>
   <license>BSD</license>
-  <license>LGPLv3</license>
+  <license>Apache 2.0</license>
   <author>Levi Armstrong</author>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>cmake</buildtool_depend>
+  <build_depend>ros_industrial_cmake_boilerplate</build_depend>
 
+  <depend>tesseract_common</depend>
   <depend>tesseract_urdf</depend>
   <depend>tesseract_environment</depend>
   <depend>tesseract_collision</depend>
-  <depend>tesseract_collision_physx</depend>
-  <depend>tesseract_rosutils</depend>
+<!--  <depend>tesseract_collision_physx</depend>-->
   <depend>moveit_core</depend>
-  <depend>moveit_ros_planning_interface</depend>
   <depend>random_numbers</depend>
   <depend>libconsole-bridge-dev</depend>
+
   <exec_depend>moveit_resources</exec_depend>
   <exec_depend>moveit_resources_panda_moveit_config</exec_depend>
 
@@ -26,5 +27,6 @@
   <test_depend>tesseract_scene_graph</test_depend>
 
   <export>
+    <build_type>cmake</build_type>
   </export>
 </package>
