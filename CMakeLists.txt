@@ -13,6 +13,7 @@ find_package(console_bridge REQUIRED)
 find_package(tesseract_geometry REQUIRED)
 find_package(tesseract_common REQUIRED)
 find_package(tesseract_collision REQUIRED)
+find_package(tesseract_collision_coal REQUIRED)
 find_package(tesseract_urdf REQUIRED)
 find_package(tesseract_environment REQUIRED)
 # find_package(tesseract_collision_physx REQUIRED)
@@ -22,6 +23,8 @@ target_link_libraries(${PROJECT_NAME}
   tesseract::tesseract_urdf
   tesseract::tesseract_environment
   tesseract::tesseract_collision_bullet
+  tesseract::tesseract_collision_fcl
+  tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
   moveit_core::moveit_collision_detection
   moveit_core::moveit_collision_detection_fcl
@@ -42,6 +45,8 @@ target_link_libraries(${PROJECT_NAME}_only
   tesseract::tesseract_urdf
   tesseract::tesseract_environment
   tesseract::tesseract_collision_bullet
+  tesseract::tesseract_collision_fcl
+  tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
   ${random_numbers_LIBRARIES}
 )

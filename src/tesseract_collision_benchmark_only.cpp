@@ -45,6 +45,7 @@
 #include <tesseract_collision/bullet/bullet_discrete_bvh_manager.h>
 #include <tesseract_collision/bullet/bullet_discrete_simple_manager.h>
 #include <tesseract_collision/fcl/fcl_discrete_managers.h>
+#include <tesseract_collision/coal/coal_discrete_managers.h>
 // #include <tesseract_collision_physx/physx_discrete_manager.h>
 
 #include <tesseract_geometry/geometry.h>
@@ -281,7 +282,11 @@ void runTesseractCollisionDetection(const std::string& name,
     for (const auto& c : res)
         contact_count += c.second.size();
 
-    CONSOLE_BRIDGE_logInform("%s, %lf, %ld, %ld", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+    CONSOLE_BRIDGE_logInform("%-40s | %17.0f | %16zu | %12zu",
+                             desc.c_str(),
+                             checks_per_second,
+                             total_num_checks,
+                             contact_count);
 }
 
 int main(int argc, char** argv)
@@ -315,6 +320,7 @@ int main(int argc, char** argv)
     contact_checkers.push_back(tesseract_env.getDiscreteContactManager("BulletDiscreteBVHManager"));
     contact_checkers.push_back(tesseract_env.getDiscreteContactManager("BulletDiscreteSimpleManager"));
     contact_checkers.push_back(tesseract_env.getDiscreteContactManager("FCLDiscreteBVHManager"));
+    contact_checkers.push_back(tesseract_env.getDiscreteContactManager("CoalDiscreteBVHManager"));
     // contact_checkers.push_back(tesseract_env.getDiscreteContactManager("PhysxDiscreteManager"));
 
     std::vector<tesseract_geometry::Geometry::ConstPtr> shapes;
@@ -342,7 +348,8 @@ int main(int argc, char** argv)
         contact_checker->setDefaultCollisionMargin(0);
 
     CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %u out of %u states in collision", states_in_collision, 50);
-    CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+    CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -351,9 +358,11 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false, is_physx);
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false, is_physx);
     }
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %u out of %u states in collision", states_in_collision, 50);
-    CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+    CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -362,9 +371,11 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true, is_physx);
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true, is_physx);
     }
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, 0.2m), %u out of %u states in collision", states_in_collision, t_sampled_states.size());
-    CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+    CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     for (auto& contact_checker : contact_checkers)
         contact_checker->setDefaultCollisionMargin(0.2);
@@ -376,6 +387,7 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true, is_physx);
         runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true, is_physx);
     }
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     return 0;
 }

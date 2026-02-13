@@ -35,7 +35,6 @@
 /* Author: Jens Petit */
 
 #include <moveit/planning_scene/planning_scene.h>
-#include <moveit/collision_plugin_loader/collision_plugin_loader.h>
 #include <moveit/collision_detection_bullet/collision_detector_allocator_bullet.h>
 #include <moveit/collision_detection_fcl/collision_detector_allocator_fcl.h>
 #include <moveit/robot_model/robot_model.h>
@@ -51,6 +50,7 @@
 #include <tesseract_collision/bullet/bullet_discrete_bvh_manager.h>
 #include <tesseract_collision/bullet/bullet_discrete_simple_manager.h>
 #include <tesseract_collision/fcl/fcl_discrete_managers.h>
+#include <tesseract_collision/coal/coal_discrete_managers.h>
 // #include <tesseract_collision_physx/physx_discrete_manager.h>
 
 #include <tesseract_geometry/geometry.h>
@@ -470,6 +470,7 @@ int main(int argc, char** argv)
   contact_checkers.push_back(tesseract_env.getDiscreteContactManager("BulletDiscreteBVHManager"));
   contact_checkers.push_back(tesseract_env.getDiscreteContactManager("BulletDiscreteSimpleManager"));
   contact_checkers.push_back(tesseract_env.getDiscreteContactManager("FCLDiscreteBVHManager"));
+  contact_checkers.push_back(tesseract_env.getDiscreteContactManager("CoalDiscreteBVHManager"));
   // contact_checkers.push_back(tesseract_env.getDiscreteContactManager("PhysxDiscreteManager"));
 
   std::vector<tesseract_geometry::Geometry::ConstPtr> shapes;

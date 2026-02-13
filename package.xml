@@ -15,6 +15,7 @@
   <depend>tesseract_urdf</depend>
   <depend>tesseract_environment</depend>
   <depend>tesseract_collision</depend>
+  <depend>tesseract_collision_coal</depend>
 <!--  <depend>tesseract_collision_physx</depend>-->
   <depend>moveit_core</depend>
   <depend>random_numbers</depend>
