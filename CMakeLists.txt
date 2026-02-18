@@ -70,3 +70,6 @@ install(DIRECTORY include/${PROJECT_NAME}
 foreach(dir data)
   install(DIRECTORY ${dir}/ DESTINATION share/${PROJECT_NAME}/${dir})
 endforeach()
+
+install(PROGRAMS scripts/plot_benchmark_csv.py
+  DESTINATION share/${PROJECT_NAME}/scripts)

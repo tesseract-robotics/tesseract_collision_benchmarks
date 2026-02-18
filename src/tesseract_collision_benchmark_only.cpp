@@ -53,16 +53,18 @@
 #include <tesseract_geometry/impl/mesh.h>
 #include <tesseract_geometry/impl/convex_mesh.h>
 #include <tesseract_geometry/impl/box.h>
-#include <tesseract_collision/core/discrete_contact_manager.h>
 #include <tesseract_collision/bullet/convex_hull_utils.h>
-#include <tesseract_state_solver/state_solver.h>
 #include <tesseract_environment/environment.h>
 #include <tesseract_environment/commands/modify_allowed_collisions_command.h>
 
-#include <tesseract_collision_benchmark/types.h>
 
 #include <random_numbers/random_numbers.h>
 #include <console_bridge/console.h>
+
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
 namespace tesseract_collision
 {
@@ -82,7 +84,7 @@ void clutterWorld(std::vector<tesseract_geometry::Geometry::ConstPtr>& shapes,
 {
     CONSOLE_BRIDGE_logInform("Cluttering scene...");
 
-    random_numbers::RandomNumberGenerator num_generator = random_numbers::RandomNumberGenerator(123);
+    auto num_generator = random_numbers::RandomNumberGenerator(123);
 
     auto t_env_state = state_solver->getState();
     contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
@@ -219,14 +221,17 @@ int findStates(std::vector<tesseract_common::TransformMap>& robot_states,
 *   \param checker Tesseract contact checker
 *   \param state A vector of collision object transforms
 *   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
-*   \param distance Turn on distance */
-void runTesseractCollisionDetection(const std::string& name,
+*   \param distance Turn on distance
+*   \param penetration Turn on penetration */
+void runTesseractCollisionDetection(std::ostream& csv_stream,
+                                    const std::string& name,
+                                    const std::string& scenario,
                                     unsigned int trials,
                                     tesseract_collision::DiscreteContactManager& checker,
                                     const std::vector<tesseract_common::TransformMap>& states,
                                     tesseract_collision::ContactTestType test_type,
                                     bool distance = false,
-                                    bool contacts = false,
+                                    bool penetration = false,
                                     bool is_physx = false)
 {
     //  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
@@ -239,7 +244,7 @@ void runTesseractCollisionDetection(const std::string& name,
     tesseract_collision::ContactResultMap res;
     tesseract_collision::ContactRequest req(test_type);
     req.calculate_distance = distance;
-    req.calculate_penetration = contacts;
+    req.calculate_penetration = penetration;
 
     tesseract_common::Stopwatch stopwatch;
     stopwatch.start();
@@ -249,7 +254,7 @@ void runTesseractCollisionDetection(const std::string& name,
         // sleep if they have not moved in 3-4 contact test requests.
         for (unsigned int i = 0; i < trials; ++i)
         {
-            for (auto& state : states)
+            for (const auto& state : states)
             {
                 res.clear();
                 checker.setCollisionObjectsTransform(state);
@@ -261,7 +266,7 @@ void runTesseractCollisionDetection(const std::string& name,
     {
         // This is more representative of moveit because the state transforms only get updated the first time it is
         // called and does not update them for subsequent request becasuse the joint values have not change
-        for (auto& state : states)
+        for (const auto& state : states)
         {
             checker.setCollisionObjectsTransform(state);
             for (unsigned int i = 0; i < trials; ++i)
@@ -282,6 +287,13 @@ void runTesseractCollisionDetection(const std::string& name,
     for (const auto& c : res)
         contact_count += c.second.size();
 
+    csv_stream << std::quoted(scenario) << ","
+               << std::quoted(name) << ","
+               << std::quoted(ct) << ","
+               << checks_per_second << ","
+               << total_num_checks << ","
+               << contact_count << "\n";
+
     CONSOLE_BRIDGE_logInform("%-40s | %17.0f | %16zu | %12zu",
                              desc.c_str(),
                              checks_per_second,
@@ -292,7 +304,19 @@ void runTesseractCollisionDetection(const std::string& name,
 int main(int argc, char** argv)
 {
     console_bridge::setLogLevel(console_bridge::LogLevel::CONSOLE_BRIDGE_LOG_INFO);
-    unsigned int trials = 1000;
+    const unsigned int trials = 1000;
+    const unsigned int num_states = 50;
+
+    std::string csv_path = "tesseract_collision_benchmark.csv";
+    if (argc > 1)
+        csv_path = argv[1];
+
+    std::ofstream csv_file(csv_path);
+    if (!csv_file.is_open())
+    {
+        CONSOLE_BRIDGE_logError("Failed to open CSV file: %s", csv_path.c_str());
+        return 1;
+    }
 
     // ************************************************
     // SETUP TESSERACT ENVIRONMENT
@@ -325,7 +349,7 @@ int main(int argc, char** argv)
 
     std::vector<tesseract_geometry::Geometry::ConstPtr> shapes;
     tesseract_common::VectorIsometry3d shape_poses;
-    clutterWorld(shapes, shape_poses, contact_checkers.front()->clone(), tesseract_state_solver->clone(), 50, tesseract_collision::CollisionObjectType::CONVEX_MESH);
+    clutterWorld(shapes, shape_poses, contact_checkers.front()->clone(), tesseract_state_solver->clone(), num_states, tesseract_collision::CollisionObjectType::CONVEX_MESH);
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -334,12 +358,12 @@ int main(int argc, char** argv)
         contact_checker->setActiveCollisionObjects(link_names);
     }
 
-    CONSOLE_BRIDGE_logInform("Starting...");
+    CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world");
 
     sleep(1);
 
     std::vector<tesseract_common::TransformMap> t_sampled_states;
-    int states_in_collision = findStates(t_sampled_states, tesseract_collision::RobotStateSelector::IN_COLLISION , 50, contact_checkers.front()->clone(), tesseract_state_solver->clone());
+    int states_in_collision = findStates(t_sampled_states, tesseract_collision::RobotStateSelector::IN_COLLISION , num_states, contact_checkers.front()->clone(), tesseract_state_solver->clone());
 
     for (auto& s : t_sampled_states)
       s.erase("world");
@@ -347,33 +371,44 @@ int main(int argc, char** argv)
     for (auto& contact_checker : contact_checkers)
         contact_checker->setDefaultCollisionMargin(0);
 
-    CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %u out of %u states in collision", states_in_collision, 50);
+    csv_file << "scenario,manager,mode,checks_per_second,total_num_checks,num_contacts\n";
+
+    std::ostringstream scenario;
+    scenario << "Contact Only, " << states_in_collision << " out of " << t_sampled_states.size() << " states in collision";
+        
+    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     for (auto& contact_checker : contact_checkers)
     {
         const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, false, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, false, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, false, is_physx);
     }
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
-    CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %u out of %u states in collision", states_in_collision, 50);
+    scenario.str("");
+    scenario << "Penetration Enabled, " << states_in_collision << " out of " << t_sampled_states.size() << " states in collision";
+
+    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
     for (auto& contact_checker : contact_checkers)
     {
         const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, true, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, false, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, false, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, false, true, is_physx);
     }
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
-    CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, 0.2m), %u out of %u states in collision", states_in_collision, t_sampled_states.size());
+    scenario.str("");
+    scenario << "Distance (0.2 m) Enabled, " << states_in_collision << " out of " << t_sampled_states.size() << " states in collision";
+
+    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
 
@@ -383,11 +418,29 @@ int main(int argc, char** argv)
     for (auto& contact_checker : contact_checkers)
     {
         const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, true, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true, is_physx);
-        runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, false, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, false, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, false, is_physx);
     }
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
+
+    scenario.str("");
+    scenario << "Distance (0.2 m) and Penetration Enabled, " << states_in_collision << " out of " << t_sampled_states.size() << " states in collision";
+
+    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
+    CONSOLE_BRIDGE_logInform("%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
+
+    for (auto& contact_checker : contact_checkers)
+    {
+        const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::FIRST, true, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::CLOSEST, true, true, is_physx);
+        runTesseractCollisionDetection(csv_file, contact_checker->getName(), scenario.str(), trials, *contact_checker, t_sampled_states, tesseract_collision::ContactTestType::ALL, true, true, is_physx);
+    }
+    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+-------------");
+
+    CONSOLE_BRIDGE_logInform("CSV results written to %s", csv_path.c_str());
 
     return 0;
 }
