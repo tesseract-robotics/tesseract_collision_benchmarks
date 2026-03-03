@@ -1,7 +1,7 @@
 #ifndef TESSERACT_COLLISION_BENCHMARK_TYPES_H
 #define TESSERACT_COLLISION_BENCHMARK_TYPES_H
 
-namespace tesseract_collision
+namespace tesseract::collision
 {
 
 /** \brief Factor to compute the maximum number of trials random clutter generation. */

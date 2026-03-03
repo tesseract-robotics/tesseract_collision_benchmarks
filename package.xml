@@ -11,10 +11,7 @@
   <buildtool_depend>cmake</buildtool_depend>
   <build_depend>ros_industrial_cmake_boilerplate</build_depend>
 
-  <depend>tesseract_common</depend>
-  <depend>tesseract_urdf</depend>
-  <depend>tesseract_environment</depend>
-  <depend>tesseract_collision</depend>
+  <depend>tesseract</depend>
   <depend>tesseract_collision_coal</depend>
 <!--  <depend>tesseract_collision_physx</depend>-->
   <depend>moveit_core</depend>

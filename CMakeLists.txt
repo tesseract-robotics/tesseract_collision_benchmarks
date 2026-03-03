@@ -10,20 +10,20 @@ find_package(random_numbers REQUIRED)
 
 find_package(Eigen3 REQUIRED)
 find_package(console_bridge REQUIRED)
-find_package(tesseract_geometry REQUIRED)
-find_package(tesseract_common REQUIRED)
-find_package(tesseract_collision REQUIRED)
+find_package(tesseract REQUIRED COMPONENTS geometry)
+find_package(tesseract REQUIRED COMPONENTS common)
+find_package(tesseract REQUIRED COMPONENTS collision collision_bullet collision_fcl)
 find_package(tesseract_collision_coal REQUIRED)
-find_package(tesseract_urdf REQUIRED)
-find_package(tesseract_environment REQUIRED)
+find_package(tesseract REQUIRED COMPONENTS urdf)
+find_package(tesseract REQUIRED COMPONENTS environment)
 # find_package(tesseract_collision_physx REQUIRED)
 
 add_executable(${PROJECT_NAME} src/tesseract_collision_benchmark.cpp)
 target_link_libraries(${PROJECT_NAME}
-  tesseract::tesseract_urdf
-  tesseract::tesseract_environment
-  tesseract::tesseract_collision_bullet
-  tesseract::tesseract_collision_fcl
+  tesseract::urdf
+  tesseract::environment
+  tesseract::collision_bullet
+  tesseract::collision_fcl
   tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
   moveit_core::moveit_collision_detection
@@ -42,10 +42,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE SYSTEM
 
 add_executable(${PROJECT_NAME}_only src/tesseract_collision_benchmark_only.cpp)
 target_link_libraries(${PROJECT_NAME}_only
-  tesseract::tesseract_urdf
-  tesseract::tesseract_environment
-  tesseract::tesseract_collision_bullet
-  tesseract::tesseract_collision_fcl
+  tesseract::urdf
+  tesseract::environment
+  tesseract::collision_bullet
+  tesseract::collision_fcl
   tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
   ${random_numbers_LIBRARIES}
