@@ -10,12 +10,8 @@ find_package(random_numbers REQUIRED)
 
 find_package(Eigen3 REQUIRED)
 find_package(console_bridge REQUIRED)
-find_package(tesseract REQUIRED COMPONENTS geometry)
-find_package(tesseract REQUIRED COMPONENTS common)
-find_package(tesseract REQUIRED COMPONENTS collision collision_bullet collision_fcl)
+find_package(tesseract REQUIRED COMPONENTS common geometry urdf collision collision_bullet collision_fcl environment)
 find_package(tesseract_collision_coal REQUIRED)
-find_package(tesseract REQUIRED COMPONENTS urdf)
-find_package(tesseract REQUIRED COMPONENTS environment)
 # find_package(tesseract_collision_physx REQUIRED)
 
 add_executable(${PROJECT_NAME} src/tesseract_collision_benchmark.cpp)
