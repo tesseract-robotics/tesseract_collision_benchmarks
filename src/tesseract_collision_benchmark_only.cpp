@@ -333,9 +333,7 @@ void runTesseractContinuousCollisionDetection(
   req.calculate_penetration = penetration;
 
   // Pre-compute active link ID set for fast lookup
-  std::unordered_set<tesseract::common::LinkId> active_link_set;
-  for (const auto& link : active_links)
-    active_link_set.insert(tesseract::common::LinkId(link));
+  std::unordered_set<tesseract::common::LinkId> active_link_set(active_links.begin(), active_links.end());
 
   tesseract::common::Stopwatch stopwatch;
   stopwatch.start();
