@@ -490,11 +490,13 @@ int main(int /*argc*/, char** /*argv*/)
                50,
                tesseract::collision::CollisionObjectType::CONVEX_MESH);
 
+  const std::vector<tesseract::common::LinkId> link_ids =
+      tesseract::common::toIds<tesseract::common::LinkId>(link_names);
   for (auto& contact_checker : contact_checkers)
   {
     contact_checker->addCollisionObject("world", 0, shapes, shape_poses);
     contact_checker->setDefaultCollisionMargin(0);
-    contact_checker->setActiveCollisionObjects(link_names);
+    contact_checker->setActiveCollisionObjects(link_ids);
   }
 
   CONSOLE_BRIDGE_logInform("Starting...");

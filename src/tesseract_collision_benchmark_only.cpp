@@ -318,7 +318,7 @@ void runTesseractContinuousCollisionDetection(
     tesseract::collision::ContinuousContactManager& checker,
     const std::vector<std::pair<tesseract::common::LinkIdTransformMap, tesseract::common::LinkIdTransformMap>>&
         state_pairs,
-    const std::vector<std::string>& active_links,
+    const std::vector<tesseract::common::LinkId>& active_links,
     tesseract::collision::ContactTestType test_type,
     bool distance = false,
     bool penetration = false,
@@ -332,10 +332,10 @@ void runTesseractContinuousCollisionDetection(
   req.calculate_distance = distance;
   req.calculate_penetration = penetration;
 
-  // Pre-compute active link IDs for fast lookup
-  std::unordered_set<tesseract::common::LinkId> active_link_ids;
-  for (const auto& name : active_links)
-    active_link_ids.insert(tesseract::common::LinkId(name));
+  // Pre-compute active link ID set for fast lookup
+  std::unordered_set<tesseract::common::LinkId> active_link_set;
+  for (const auto& link : active_links)
+    active_link_set.insert(tesseract::common::LinkId(link));
 
   tesseract::common::Stopwatch stopwatch;
   stopwatch.start();
@@ -347,7 +347,7 @@ void runTesseractContinuousCollisionDetection(
     // Active links get cast (moving) transforms; others get static transforms
     for (const auto& tf : pose1)
     {
-      if (active_link_ids.count(tf.first) != 0)
+      if (active_link_set.count(tf.first) != 0)
         active_checker.setCollisionObjectsTransform(tf.first, tf.second, pose2.at(tf.first));
       else
         active_checker.setCollisionObjectsTransform(tf.first, tf.second);
@@ -462,13 +462,13 @@ int main(int argc, char** argv)
 
   tesseract::environment::Environment tesseract_env;
   tesseract_env.init(std::filesystem::path(urdf->getFilePath()), std::filesystem::path(srdf->getFilePath()), locator);
-  std::vector<std::string> link_names = tesseract_env.getActiveLinkNames();
+  std::vector<tesseract::common::LinkId> link_ids = tesseract_env.getActiveLinkIds();
 
   // Exclude robot collisions
   tesseract::common::AllowedCollisionMatrix modify_ac;
-  for (std::size_t i = 0; i < link_names.size() - 1; ++i)
-    for (std::size_t j = i + 1; j < link_names.size(); ++j)
-      modify_ac.addAllowedCollision(link_names[i], link_names[j], "exclude robot links");
+  for (std::size_t i = 0; i < link_ids.size() - 1; ++i)
+    for (std::size_t j = i + 1; j < link_ids.size(); ++j)
+      modify_ac.addAllowedCollision(link_ids[i], link_ids[j], "exclude robot links");
 
   auto cmd = std::make_shared<tesseract::environment::ModifyAllowedCollisionsCommand>(
       modify_ac, tesseract::environment::ModifyAllowedCollisionsType::ADD);
@@ -496,7 +496,7 @@ int main(int argc, char** argv)
   {
     contact_checker->addCollisionObject("world", 0, shapes, shape_poses);
     contact_checker->setDefaultCollisionMargin(0);
-    contact_checker->setActiveCollisionObjects(link_names);
+    contact_checker->setActiveCollisionObjects(link_ids);
   }
 
   CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world");
@@ -741,7 +741,7 @@ int main(int argc, char** argv)
     {
       checker->addCollisionObject("world", 0, shapes, shape_poses);
       checker->setDefaultCollisionMargin(0);
-      checker->setActiveCollisionObjects(link_names);
+      checker->setActiveCollisionObjects(link_ids);
     }
 
     // Build state pairs from consecutive sampled states
@@ -775,7 +775,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  false,
                                                  false,
@@ -787,7 +787,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  false,
                                                  false,
@@ -799,7 +799,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  false,
                                                  false,
@@ -827,7 +827,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  false,
                                                  true,
@@ -839,7 +839,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  false,
                                                  true,
@@ -851,7 +851,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  false,
                                                  true,
@@ -882,7 +882,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  true,
                                                  false,
@@ -894,7 +894,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  true,
                                                  false,
@@ -906,7 +906,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  true,
                                                  false,
@@ -934,7 +934,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  true,
                                                  true,
@@ -946,7 +946,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  true,
                                                  true,
@@ -958,7 +958,7 @@ int main(int argc, char** argv)
                                                  trials,
                                                  *checker,
                                                  state_pairs,
-                                                 link_names,
+                                                 link_ids,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  true,
                                                  true,
