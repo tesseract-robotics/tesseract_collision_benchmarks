@@ -29,10 +29,9 @@ target_link_libraries(
   moveit_core::moveit_planning_scene
   moveit_core::moveit_robot_model
   moveit_core::moveit_test_utils
-  ${random_numbers_LIBRARIES})
+  random_numbers::random_numbers)
 target_include_directories(${PROJECT_NAME} PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
                                                    "$<INSTALL_INTERFACE:include>")
-target_include_directories(${PROJECT_NAME} PRIVATE SYSTEM ${random_numbers_INCLUDE_DIRS})
 
 add_executable(${PROJECT_NAME}_only src/tesseract_collision_benchmark_only.cpp)
 target_link_libraries(
@@ -43,10 +42,9 @@ target_link_libraries(
   tesseract::collision_fcl
   tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
-  ${random_numbers_LIBRARIES})
+  random_numbers::random_numbers)
 target_include_directories(${PROJECT_NAME}_only PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
                                                         "$<INSTALL_INTERFACE:include>")
-target_include_directories(${PROJECT_NAME}_only PRIVATE SYSTEM ${random_numbers_INCLUDE_DIRS})
 
 configure_package(NAMESPACE tesseract TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_only)
 
