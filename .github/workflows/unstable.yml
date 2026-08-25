@@ -1,0 +1,62 @@
+name: Unstable
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'package.xml'
+      - '**.repos'
+      - '.github/workflows/unstable.yml'
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+# Supersede in-progress pull-request runs; queue everything else so two runs on one ref never race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: noble
+            distro: jazzy
+    container:
+      image: ghcr.io/tesseract-robotics/tesseract:${{ matrix.os }}-master
+      env:
+        DEBIAN_FRONTEND: noninteractive
+        TZ: Etc/UTC
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          path: target_ws/src
+
+      - name: Install Depends
+        shell: bash
+        run: |
+          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+          apt update -qq
+          apt install -y ros-${{ matrix.distro }}-ros-base liboctomap-dev
+
+      - name: Build
+        uses: tesseract-robotics/colcon-action@v15
+        with:
+          before-script: source /opt/tesseract/install/setup.bash && source /opt/ros/${{ matrix.distro }}/setup.bash
+          ccache-prefix: unstable-${{ matrix.distro }}
+          vcs-file: dependencies.repos
+          upstream-args: --cmake-args -DCMAKE_BUILD_TYPE=Release
+          target-path: target_ws/src
+          target-args: --cmake-args -DCMAKE_BUILD_TYPE=Debug
+          run-tests: false
