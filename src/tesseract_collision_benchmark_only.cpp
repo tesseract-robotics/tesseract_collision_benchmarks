@@ -70,6 +70,7 @@
 #include <iostream>
 #include <sstream>
 #include <cmath>
+#include <cstdlib>
 #include <unordered_set>
 
 namespace tesseract::collision
@@ -385,50 +386,70 @@ int main(int argc, char** argv)
   int seed = -1;
   bool clone_per_state = false;
 
+  const std::string mode_values = "discrete, continuous, or both";
+  const std::string test_type_values = "first, closest, all, or all-types";
+
   for (int i = 1; i < argc; ++i)
   {
-    if ((std::string(argv[i]) == "--mode" || std::string(argv[i]) == "-m") && i + 1 < argc)
+    const std::string arg = argv[i];
+
+    // Consume and return the value following a flag, or exit if it is missing.
+    auto require_value = [&](const std::string& hint) -> std::string {
+      if (i + 1 >= argc)
+      {
+        CONSOLE_BRIDGE_logError("Missing value for %s. %s", arg.c_str(), hint.c_str());
+        std::exit(1);
+      }
+      return argv[++i];
+    };
+
+    if (arg == "--mode" || arg == "-m")
     {
-      mode = argv[++i];
+      mode = require_value("Use: " + mode_values);
       if (mode != "discrete" && mode != "continuous" && mode != "both")
       {
-        CONSOLE_BRIDGE_logError("Invalid mode '%s'. Use: discrete, continuous, or both", mode.c_str());
+        CONSOLE_BRIDGE_logError("Invalid mode '%s'. Use: %s", mode.c_str(), mode_values.c_str());
         return 1;
       }
     }
-    else if ((std::string(argv[i]) == "--test-type" || std::string(argv[i]) == "-t") && i + 1 < argc)
+    else if (arg == "--test-type" || arg == "-t")
     {
-      test_type = argv[++i];
+      test_type = require_value("Use: " + test_type_values);
       if (test_type != "first" && test_type != "closest" && test_type != "all" && test_type != "all-types")
       {
-        CONSOLE_BRIDGE_logError("Invalid test-type '%s'. Use: first, closest, all, or all-types", test_type.c_str());
+        CONSOLE_BRIDGE_logError("Invalid test-type '%s'. Use: %s", test_type.c_str(), test_type_values.c_str());
         return 1;
       }
     }
-    else if ((std::string(argv[i]) == "--seed" || std::string(argv[i]) == "-s") && i + 1 < argc)
+    else if (arg == "--seed" || arg == "-s")
     {
-      seed = std::stoi(argv[++i]);
+      seed = std::stoi(require_value("Provide an integer seed."));
     }
-    else if (std::string(argv[i]) == "--clone")
+    else if (arg == "--clone")
     {
       clone_per_state = true;
     }
-    else if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h")
+    else if (arg == "--help" || arg == "-h")
     {
       std::cout << "Usage: " << argv[0]
                 << " [CSV_PATH] [--mode discrete|continuous|both] [--test-type first|closest|all|all-types] [--seed N] "
                    "[--clone]\n"
                 << "  CSV_PATH        Output CSV file (default: tesseract_collision_benchmark.csv)\n"
-                << "  --mode/-m       Benchmark mode: discrete, continuous, or both (default: both)\n"
-                << "  --test-type/-t  Contact test type filter: first, closest, all, or all-types (default: "
-                   "all-types)\n"
+                << "  --mode/-m       Benchmark mode: " << mode_values << " (default: both)\n"
+                << "  --test-type/-t  Contact test type filter: " << test_type_values << " (default: all-types)\n"
                 << "  --seed/-s       Fixed RNG seed for reproducible robot states (default: time-based)\n"
-                << "  --clone         Clone manager per state pair in continuous mode (simulates TrajOpt)\n";
+                << "  --clone         Clone manager per state pair in continuous mode (simulates TrajOpt)\n"
+                << "  --help/-h       Show this help message and exit\n";
       return 0;
     }
-    else if (argv[i][0] != '-')
+    else if (!arg.empty() && arg[0] == '-')
     {
-      csv_path = argv[i];
+      CONSOLE_BRIDGE_logError("Unknown option '%s'. Use --help for usage.", arg.c_str());
+      return 1;
+    }
+    else
+    {
+      csv_path = arg;
     }
   }
 
