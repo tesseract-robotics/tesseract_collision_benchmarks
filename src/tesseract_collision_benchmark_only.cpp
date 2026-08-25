@@ -172,7 +172,7 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
  *  \param robot_states Result vector
  *  \return number of state in collision
  */
-int findStates(std::vector<tesseract::common::TransformMap>& robot_states,
+int findStates(std::vector<tesseract::common::LinkIdTransformMap>& robot_states,
                RobotStateSelector desired_states,
                unsigned int num_states,
                const DiscreteContactManager::Ptr &contact_checker,
@@ -228,7 +228,7 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
                                     const std::string& scenario,
                                     unsigned int trials,
                                     tesseract::collision::DiscreteContactManager& checker,
-                                    const std::vector<tesseract::common::TransformMap>& states,
+                                    const std::vector<tesseract::common::LinkIdTransformMap>& states,
                                     tesseract::collision::ContactTestType test_type,
                                     bool distance = false,
                                     bool penetration = false,
@@ -327,13 +327,13 @@ int main(int argc, char** argv)
 
     tesseract::environment::Environment tesseract_env;
     tesseract_env.init(std::filesystem::path(urdf->getFilePath()), std::filesystem::path(srdf->getFilePath()), locator);
-    std::vector<std::string> link_names = tesseract_env.getActiveLinkNames();
+    std::vector<tesseract::common::LinkId> link_ids = tesseract_env.getActiveLinkIds();
 
     // Exclude robot collisions
     tesseract::common::AllowedCollisionMatrix modify_ac;
-    for (std::size_t i = 0; i < link_names.size() - 1; ++i)
-        for (std::size_t j = i + 1; j < link_names.size(); ++j)
-            modify_ac.addAllowedCollision(link_names[i], link_names[j], "exclude robot links");
+    for (std::size_t i = 0; i < link_ids.size() - 1; ++i)
+        for (std::size_t j = i + 1; j < link_ids.size(); ++j)
+            modify_ac.addAllowedCollision(link_ids[i], link_ids[j], "exclude robot links");
 
     auto cmd = std::make_shared<tesseract::environment::ModifyAllowedCollisionsCommand>(modify_ac, tesseract::environment::ModifyAllowedCollisionsType::ADD);
     tesseract_env.applyCommand(cmd);
@@ -355,14 +355,14 @@ int main(int argc, char** argv)
     {
         contact_checker->addCollisionObject("world", 0, shapes, shape_poses);
         contact_checker->setDefaultCollisionMargin(0);
-        contact_checker->setActiveCollisionObjects(link_names);
+        contact_checker->setActiveCollisionObjects(link_ids);
     }
 
     CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world");
 
     sleep(1);
 
-    std::vector<tesseract::common::TransformMap> t_sampled_states;
+    std::vector<tesseract::common::LinkIdTransformMap> t_sampled_states;
     int states_in_collision = findStates(t_sampled_states, tesseract::collision::RobotStateSelector::IN_COLLISION , num_states, contact_checkers.front()->clone(), tesseract_state_solver->clone());
 
     for (auto& s : t_sampled_states)
