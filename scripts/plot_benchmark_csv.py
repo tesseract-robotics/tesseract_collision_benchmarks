@@ -54,7 +54,7 @@ def plot_scenario(df, scenario, output_dir):
     )
 
     scenario_prefix = scenario.split(",", 1)[0].strip()
-    filename = scenario_prefix.lower().replace(" ", "_").replace(".", "")
+    filename = scenario_prefix.lower().replace(":", "").replace(" ", "_").replace(".", "")
     output_path = os.path.join(output_dir, f"checks_per_second_{filename}.png")
     fig.subplots_adjust(top=0.9, bottom=0.2, left=0.04, right=0.98)
     plt.savefig(output_path, dpi=150, bbox_inches="tight")

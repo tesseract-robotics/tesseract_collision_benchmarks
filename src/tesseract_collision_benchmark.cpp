@@ -211,7 +211,7 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
     contact_checker->removeCollisionObject(name);
     i++;
   }
-  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %d objects", added_objects);
+  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %zu objects", added_objects);
 }
 
 /** \brief Samples valid states of the robot which can be in collision if desired.
@@ -342,7 +342,7 @@ void runCollisionDetection(unsigned int trials,
   const double checks_per_second = static_cast<double>(trials * states.size()) / duration;
   const std::size_t total_num_checks = trials * states.size();
   const std::size_t contact_count = (res.collision && res.contact_count == 0) ? 1 : res.contact_count;
-  CONSOLE_BRIDGE_logInform("%s, %lf, %ld, %ld", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
 
   // color collided objects red
   //  for (auto& contact : res.contacts)
@@ -429,7 +429,7 @@ void runTesseractCollisionDetection(const std::string& name,
   for (const auto& c : res)
     contact_count += c.second.size();
 
-  CONSOLE_BRIDGE_logInform("%s, %lf, %ld, %ld", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
 }
 
 int main(int /*argc*/, char** /*argv*/)
@@ -530,8 +530,8 @@ int main(int /*argc*/, char** /*argv*/)
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %u "
-                           "out of %u states in collision",
+  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %d "
+                           "out of %d states in collision",
                            states_in_collision,
                            50);
   CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
@@ -593,7 +593,7 @@ int main(int /*argc*/, char** /*argv*/)
                                    is_physx);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %u out of %u states "
+  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %d out of %d states "
                            "in collision",
                            states_in_collision,
                            50);
@@ -657,7 +657,7 @@ int main(int /*argc*/, char** /*argv*/)
   }
 
   CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, "
-                           "0.2m), %u out of %u states in collision",
+                           "0.2m), %d out of %zu states in collision",
                            states_in_collision,
                            t_sampled_states.size());
   CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
