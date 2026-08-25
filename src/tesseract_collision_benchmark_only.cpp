@@ -621,7 +621,7 @@ int main(int argc, char** argv)
   // ************************************************
   if (run_discrete)
   {
-    scenario << "Contact Only, " << states_in_collision << " out of " << t_sampled_states.size()
+    scenario << "Discrete: Contact Only, " << states_in_collision << " out of " << t_sampled_states.size()
              << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
@@ -671,7 +671,7 @@ int main(int argc, char** argv)
                              "-----");
 
     scenario.str("");
-    scenario << "Penetration Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
+    scenario << "Discrete: Penetration Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
              << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
@@ -721,7 +721,7 @@ int main(int argc, char** argv)
                              "-----");
 
     scenario.str("");
-    scenario << "Distance (0.2 m) Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
+    scenario << "Discrete: Distance (0.2 m) Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
              << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
@@ -774,7 +774,7 @@ int main(int argc, char** argv)
                              "-----");
 
     scenario.str("");
-    scenario << "Distance (0.2 m) and Penetration Enabled, " << states_in_collision << " out of "
+    scenario << "Discrete: Distance (0.2 m) and Penetration Enabled, " << states_in_collision << " out of "
              << t_sampled_states.size() << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
