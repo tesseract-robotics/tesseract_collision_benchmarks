@@ -97,7 +97,10 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
     current_state.setToDefaultValues(current_state.getJointModelGroup("panda_arm"), "home");
     current_state.update();
 
-    auto t_env_state = state_solver->getState(current_state.getVariableNames(), Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(), static_cast<long>(current_state.getVariableNames().size())));
+    auto t_env_state =
+        state_solver->getState(tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
+                               Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
+                                                           static_cast<long>(current_state.getVariableNames().size())));
     contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
 
     // load panda link5 as world collision object
@@ -237,7 +240,10 @@ int findStates(std::vector<moveit::core::RobotState>& robot_states,
         collision_detection::CollisionResult res;
         scene->checkSelfCollision(req, res);
 
-        auto t_env_state = state_solver->getState(current_state.getVariableNames(), Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(), static_cast<long>(current_state.getVariableNames().size())));
+        auto t_env_state = state_solver->getState(
+            tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
+            Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
+                                        static_cast<long>(current_state.getVariableNames().size())));
         contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
         tesseract::collision::ContactRequest t_req(tesseract::collision::ContactTestType::FIRST);
         tesseract::collision::ContactResultMap t_res;
@@ -364,7 +370,7 @@ void runCollisionDetection(unsigned int trials,
 void runTesseractCollisionDetection(const std::string& name,
                                     unsigned int trials,
                                     tesseract::collision::DiscreteContactManager& checker,
-                                    const std::vector<tesseract::common::TransformMap>& states,
+                                    const std::vector<tesseract::common::LinkIdTransformMap>& states,
                                     tesseract::collision::ContactTestType test_type,
                                     bool distance = false,
                                     bool contacts = false,
@@ -442,6 +448,8 @@ int main(int argc, char** argv)
   collision_detection::CollisionRequest req;
   collision_detection::CollisionResult res;
   std::vector<std::string> link_names = robot_model->getLinkModelNames();
+  const std::vector<tesseract::common::LinkId> link_ids =
+      tesseract::common::toIds<tesseract::common::LinkId>(link_names);
   collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(link_names, true) };
   planning_scene->checkCollision(req, res, planning_scene->getCurrentState(), acm);
 
@@ -457,9 +465,9 @@ int main(int argc, char** argv)
 
   // Exclude robot collisions
   tesseract::common::AllowedCollisionMatrix modify_ac;
-  for (std::size_t i = 0; i < link_names.size() - 1; ++i)
-    for (std::size_t j = i + 1; j < link_names.size(); ++j)
-      modify_ac.addAllowedCollision(link_names[i], link_names[j], "exclude robot links");
+  for (std::size_t i = 0; i < link_ids.size() - 1; ++i)
+    for (std::size_t j = i + 1; j < link_ids.size(); ++j)
+      modify_ac.addAllowedCollision(link_ids[i], link_ids[j], "exclude robot links");
 
   auto cmd = std::make_shared<tesseract::environment::ModifyAllowedCollisionsCommand>(modify_ac, tesseract::environment::ModifyAllowedCollisionsType::ADD);
   tesseract_env.applyCommand(cmd);
@@ -481,7 +489,7 @@ int main(int argc, char** argv)
   {
     contact_checker->addCollisionObject("world", 0, shapes, shape_poses);
     contact_checker->setDefaultCollisionMargin(0);
-    contact_checker->setActiveCollisionObjects(link_names);
+    contact_checker->setActiveCollisionObjects(link_ids);
   }
 
   CONSOLE_BRIDGE_logInform("Starting...");
@@ -493,13 +501,15 @@ int main(int argc, char** argv)
   current_state.update();
 
   std::vector<moveit::core::RobotState> sampled_states;
-  std::vector<tesseract::common::TransformMap> t_sampled_states;
+  std::vector<tesseract::common::LinkIdTransformMap> t_sampled_states;
   int states_in_collision = findStates(sampled_states, tesseract::collision::RobotStateSelector::IN_COLLISION , 50, planning_scene, contact_checkers.front()->clone(), tesseract_state_solver->clone());
 
   t_sampled_states.clear();
   for (auto& s : sampled_states)
   {
-    auto t_env_state = tesseract_state_solver->getState(current_state.getVariableNames(), Eigen::Map<Eigen::VectorXd>(s.getVariablePositions(), static_cast<long>(s.getVariableNames().size())));
+    auto t_env_state = tesseract_state_solver->getState(
+        tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
+        Eigen::Map<Eigen::VectorXd>(s.getVariablePositions(), static_cast<long>(s.getVariableNames().size())));
     t_env_state.link_transforms.erase("world");
     t_sampled_states.push_back(t_env_state.link_transforms);
   }
