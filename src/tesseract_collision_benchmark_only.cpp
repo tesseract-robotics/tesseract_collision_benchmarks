@@ -65,10 +65,12 @@
 #include <random_numbers/random_numbers.h>
 #include <console_bridge/console.h>
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <unordered_set>
@@ -222,6 +224,28 @@ int findStates(std::vector<tesseract::common::LinkIdTransformMap>& robot_states,
   return states_in_collision;
 }
 }  // namespace tesseract::collision
+
+/** \brief Whether a contact manager name matches a filter list.
+ *
+ *   Matching is a case-insensitive substring test, so "coal" selects every Coal manager. Filters are
+ *   expected to be lowercase already. An empty filter list selects every manager.
+ *
+ *   \param filters Lowercase name substrings to match against
+ *   \param name The manager name as reported by getName() */
+bool managerSelected(const std::vector<std::string>& filters, const std::string& name)
+{
+  if (filters.empty())
+    return true;
+
+  std::string lowered = name;
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+
+  return std::any_of(filters.begin(), filters.end(), [&lowered](const std::string& filter) {
+    return lowered.find(filter) != std::string::npos;
+  });
+}
 
 /** \brief Runs a collision detection benchmark and measures the time.
  *
@@ -385,6 +409,7 @@ int main(int argc, char** argv)
   std::string test_type = "all-types";
   int seed = -1;
   bool clone_per_state = false;
+  std::vector<std::string> manager_filters;
 
   const std::string mode_values = "discrete, continuous, or both";
   const std::string test_type_values = "first, closest, all, or all-types";
@@ -429,15 +454,37 @@ int main(int argc, char** argv)
     {
       clone_per_state = true;
     }
+    else if (arg == "--manager" || arg == "-M")
+    {
+      const std::string value = require_value("Provide a comma separated list of manager name substrings.");
+      std::stringstream token_stream(value);
+      std::string token;
+      while (std::getline(token_stream, token, ','))
+      {
+        std::transform(token.begin(), token.end(), token.begin(), [](unsigned char c) {
+          return static_cast<char>(std::tolower(c));
+        });
+        if (!token.empty())
+          manager_filters.push_back(token);
+      }
+
+      if (manager_filters.empty())
+      {
+        CONSOLE_BRIDGE_logError("No manager names found in '%s'.", value.c_str());
+        return 1;
+      }
+    }
     else if (arg == "--help" || arg == "-h")
     {
       std::cout << "Usage: " << argv[0]
                 << " [CSV_PATH] [--mode discrete|continuous|both] [--test-type first|closest|all|all-types] [--seed N] "
-                   "[--clone]\n"
+                   "[--manager NAMES] [--clone]\n"
                 << "  CSV_PATH        Output CSV file (default: tesseract_collision_benchmark.csv)\n"
                 << "  --mode/-m       Benchmark mode: " << mode_values << " (default: both)\n"
                 << "  --test-type/-t  Contact test type filter: " << test_type_values << " (default: all-types)\n"
                 << "  --seed/-s       Fixed RNG seed for reproducible robot states (default: time-based)\n"
+                << "  --manager/-M    Only benchmark managers whose name contains one of these comma separated,\n"
+                << "                  case insensitive substrings (default: all managers)\n"
                 << "  --clone         Clone manager per state pair in continuous mode (simulates TrajOpt)\n"
                 << "  --help/-h       Show this help message and exit\n";
       return 0;
@@ -450,6 +497,26 @@ int main(int argc, char** argv)
     else
     {
       csv_path = arg;
+    }
+  }
+
+  const std::vector<std::string> all_manager_names{ "BulletDiscreteBVHManager", "BulletDiscreteSimpleManager",
+                                                    "FCLDiscreteBVHManager",    "CoalDiscreteBVHManager",
+                                                    "BulletCastBVHManager",     "CoalCastBVHManager" };
+  for (const std::string& filter : manager_filters)
+  {
+    const bool matches_any = std::any_of(
+        all_manager_names.begin(), all_manager_names.end(), [&filter](const std::string& manager_name) {
+          return managerSelected({ filter }, manager_name);
+        });
+
+    if (!matches_any)
+    {
+      CONSOLE_BRIDGE_logError("No manager matches '%s'. Available managers: BulletDiscreteBVHManager, "
+                              "BulletDiscreteSimpleManager, FCLDiscreteBVHManager, CoalDiscreteBVHManager, "
+                              "BulletCastBVHManager, CoalCastBVHManager",
+                              filter.c_str());
+      return 1;
     }
   }
 
@@ -534,6 +601,16 @@ int main(int argc, char** argv)
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
+
+  // The manager list must stay complete until this point: clutterWorld() and findStates() clone
+  // contact_checkers.front(), so removing entries earlier would change which backend decides the
+  // generated world and the sampled robot states for a given seed.
+  contact_checkers.erase(std::remove_if(contact_checkers.begin(),
+                                        contact_checkers.end(),
+                                        [&manager_filters](const auto& contact_checker) {
+                                          return !managerSelected(manager_filters, contact_checker->getName());
+                                        }),
+                         contact_checkers.end());
 
   csv_file << "scenario,manager,mode,checks_per_second,total_num_checks,num_contacts\n";
 
@@ -752,9 +829,13 @@ int main(int argc, char** argv)
   // ************************************************
   if (run_continuous)
   {
+    // Filtering at construction is safe here: nothing clones cast_checkers.front(), and the state pairs
+    // come from states that were already sampled.
     std::vector<tesseract::collision::ContinuousContactManager::UPtr> cast_checkers;
-    cast_checkers.push_back(tesseract_env.getContinuousContactManager("BulletCastBVHManager"));
-    cast_checkers.push_back(tesseract_env.getContinuousContactManager("CoalCastBVHManager"));
+    if (managerSelected(manager_filters, "BulletCastBVHManager"))
+      cast_checkers.push_back(tesseract_env.getContinuousContactManager("BulletCastBVHManager"));
+    if (managerSelected(manager_filters, "CoalCastBVHManager"))
+      cast_checkers.push_back(tesseract_env.getContinuousContactManager("CoalCastBVHManager"));
 
     for (auto& checker : cast_checkers)
     {
