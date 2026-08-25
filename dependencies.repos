@@ -1,0 +1,8 @@
+- git:
+    local-name: coal
+    uri: https://github.com/rjoomen/coal.git
+    version: copilot/review-custom-cast-shape-support
+- git:
+    local-name: tesseract_collision_coal
+    uri: https://github.com/tesseract-robotics/tesseract_collision_coal.git
+    version: main
