@@ -45,7 +45,7 @@
 #include <tesseract/collision/bullet/bullet_discrete_bvh_manager.h>
 #include <tesseract/collision/bullet/bullet_discrete_simple_manager.h>
 #include <tesseract/collision/fcl/fcl_discrete_managers.h>
-#include <tesseract_collision/coal/coal_discrete_managers.h>
+#include <tesseract/collision/coal/coal_discrete_managers.h>
 // #include <tesseract_collision_physx/physx_discrete_manager.h>
 
 #include <tesseract/geometry/geometry.h>
