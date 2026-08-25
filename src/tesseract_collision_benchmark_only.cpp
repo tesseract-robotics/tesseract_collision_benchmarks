@@ -173,7 +173,7 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
     contact_checker->removeCollisionObject(name);
     i++;
   }
-  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %d objects", added_objects);
+  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %zu objects", added_objects);
 }
 
 /** \brief Samples valid states of the robot which can be in collision if desired.
