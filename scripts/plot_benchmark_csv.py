@@ -24,6 +24,47 @@ MANAGER_COLORS = {
 }
 
 
+def duty_cycle_of(df):
+    """Return the single duty cycle value in df, or None if every cell is unrecorded.
+
+    A cell is unrecorded either because the column is absent entirely (a pre-duty_cycle-column
+    CSV) or because it is present but empty for that row (e.g. such a CSV appended under the
+    current 7-column header). Both count as "unrecorded", not as a value to compare against real
+    ones, so they are dropped before inspecting what is left.
+
+    Refuses (raises SystemExit) a CSV that mixes duty cycles, including a mix of a recorded value
+    with unrecorded rows: averaging checks_per_second across rows produced under different duty
+    cycles (or of unknown duty cycle) would silently blend incomparable measurements into one
+    meaningless bar.
+    """
+    if "duty_cycle" not in df.columns:
+        return None
+
+    recorded = df["duty_cycle"].dropna()
+    if recorded.empty:
+        return None
+
+    values = sorted(recorded.unique())
+    if len(values) > 1 or len(recorded) != len(df):
+        seen = values + (["unrecorded"] if len(recorded) != len(df) else [])
+        raise SystemExit(
+            f"Refusing to plot: CSV mixes duty cycles {seen}. "
+            "Filter the file to a single duty cycle before plotting."
+        )
+    return values[0]
+
+
+def duty_cycle_label(duty_cycle):
+    """Title fragment for a duty cycle, or 'unrecorded' for a pre-duty_cycle-column CSV."""
+    return duty_cycle if duty_cycle is not None else "unrecorded"
+
+
+def duty_cycle_suffix(duty_cycle):
+    """Filename suffix for a duty cycle, or empty for a pre-duty_cycle-column CSV so that
+    existing output filenames from before this column existed keep their names."""
+    return f"_{duty_cycle}" if duty_cycle is not None else ""
+
+
 def build_color_map(managers):
     """Colour every manager in the run; unknown ones fall back to the matplotlib cycle."""
     palette = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
@@ -38,7 +79,7 @@ def build_color_map(managers):
     return color_map
 
 
-def plot_scenario(df, scenario, output_dir, color_map):
+def plot_scenario(df, scenario, output_dir, color_map, duty_cycle):
     df_s = df[df["scenario"] == scenario].copy()
 
     if df_s.empty:
@@ -47,7 +88,7 @@ def plot_scenario(df, scenario, output_dir, color_map):
     managers = sorted(df_s["manager"].unique())
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 5), sharey=False)
-    fig.suptitle(f"Checks Per Second — {scenario}")
+    fig.suptitle(f"Checks Per Second — {scenario} (duty cycle: {duty_cycle_label(duty_cycle)})")
 
     for ax, mode in zip(axes, MODE_ORDER):
         df_mode = df_s[df_s["mode"] == mode]
@@ -79,20 +120,32 @@ def plot_scenario(df, scenario, output_dir, color_map):
 
     scenario_prefix = scenario.split(",", 1)[0].strip()
     filename = scenario_prefix.lower().replace(":", "").replace(" ", "_").replace(".", "")
-    output_path = os.path.join(output_dir, f"checks_per_second_{filename}.png")
+    output_path = os.path.join(output_dir, f"checks_per_second_{filename}{duty_cycle_suffix(duty_cycle)}.png")
     fig.subplots_adjust(top=0.9, bottom=0.2, left=0.04, right=0.98)
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
-def plot_all_scenarios(df, output_dir, color_map):
+def plot_all_scenarios(df, output_dir, color_map, duty_cycle):
     scenarios = list(df["scenario"].unique())
     if not scenarios:
         return
 
     managers = sorted(df["manager"].unique())
 
-    fig, axes = plt.subplots(len(scenarios), 3, figsize=(12, 4 * len(scenarios)), sharey=False)
+    # The figure grows with the scenario count, so the suptitle is positioned by a fixed inch
+    # offset from the top rather than matplotlib's default fractional y=0.98: a fractional
+    # position stays visually fixed only for a fixed figure height, and here the figure height
+    # scales with the scenario count while the suptitle's own text height (in inches) does not,
+    # so a fractional y drifts toward the top edge — and toward the first row's title, reserved
+    # in inches below it — as more scenarios are added. See the matching inch-based reasoning on
+    # the top/bottom margins below.
+    fig_height = 4 * len(scenarios)
+    fig, axes = plt.subplots(len(scenarios), 3, figsize=(12, fig_height), sharey=False)
+    fig.suptitle(
+        f"Checks Per Second — All Scenarios (duty cycle: {duty_cycle_label(duty_cycle)})",
+        y=1 - 0.35 / fig_height,
+    )
     if len(scenarios) == 1:
         axes = [axes]
 
@@ -142,12 +195,15 @@ def plot_all_scenarios(df, output_dir, color_map):
         frameon=True,
     )
 
-    output_path = os.path.join(output_dir, "checks_per_second_all_scenarios.png")
+    output_path = os.path.join(
+        output_dir, f"checks_per_second_all_scenarios{duty_cycle_suffix(duty_cycle)}.png"
+    )
     # The figure grows with the scenario count, so reserve the legend and titles in inches; a
-    # fixed fraction would scale the gap above the legend with the number of scenarios.
-    fig_height = 4 * len(scenarios)
+    # fixed fraction would scale the gap above the legend with the number of scenarios. The top
+    # margin reserves room for both the figure suptitle and the first row's per-scenario title
+    # stacked above it (fig_height computed above, alongside the suptitle's own inch-based y).
     fig.subplots_adjust(
-        top=1 - 0.4 / fig_height,
+        top=1 - 1.1 / fig_height,
         bottom=(0.45 + 0.3 * legend_rows) / fig_height,
         left=0.05,
         right=0.995,
@@ -167,12 +223,13 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     df = pd.read_csv(args.csv)
+    duty_cycle = duty_cycle_of(df)
     color_map = build_color_map(sorted(df["manager"].unique()))
 
     for scenario in df["scenario"].unique():
-        plot_scenario(df, scenario, args.output_dir, color_map)
+        plot_scenario(df, scenario, args.output_dir, color_map, duty_cycle)
 
-    plot_all_scenarios(df, args.output_dir, color_map)
+    plot_all_scenarios(df, args.output_dir, color_map, duty_cycle)
 
 
 if __name__ == "__main__":
