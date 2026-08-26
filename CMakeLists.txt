@@ -15,7 +15,8 @@ find_package(tesseract_collision_coal REQUIRED)
 # find_package(tesseract_collision_physx REQUIRED)
 
 add_executable(${PROJECT_NAME} src/tesseract_collision_benchmark.cpp)
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(
+  ${PROJECT_NAME}
   tesseract::urdf
   tesseract::environment
   tesseract::collision_bullet
@@ -28,40 +29,36 @@ target_link_libraries(${PROJECT_NAME}
   moveit_core::moveit_planning_scene
   moveit_core::moveit_robot_model
   moveit_core::moveit_test_utils
-  random_numbers::random_numbers
-)
-target_include_directories(${PROJECT_NAME} PRIVATE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:include>")
+  random_numbers::random_numbers)
+target_include_directories(${PROJECT_NAME} PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+                                                   "$<INSTALL_INTERFACE:include>")
 
 add_executable(${PROJECT_NAME}_only src/tesseract_collision_benchmark_only.cpp)
-target_link_libraries(${PROJECT_NAME}_only
+target_link_libraries(
+  ${PROJECT_NAME}_only
   tesseract::urdf
   tesseract::environment
   tesseract::collision_bullet
   tesseract::collision_fcl
   tesseract::tesseract_collision_coal_coal
   # tesseract::tesseract_collision_physx
-  random_numbers::random_numbers
-)
-target_include_directories(${PROJECT_NAME}_only PRIVATE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:include>")
+  random_numbers::random_numbers)
+target_include_directories(${PROJECT_NAME}_only PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+                                                        "$<INSTALL_INTERFACE:include>")
 
-configure_package(
-  NAMESPACE tesseract
-  TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_only)
+configure_package(NAMESPACE tesseract TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_only)
 
 # Mark cpp header files for installation
-install(DIRECTORY include/${PROJECT_NAME}
+install(
+  DIRECTORY include/${PROJECT_NAME}
   DESTINATION include
-  FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
-  PATTERN ".svn" EXCLUDE
- )
+  FILES_MATCHING
+  PATTERN "*.h"
+  PATTERN "*.hpp"
+  PATTERN ".svn" EXCLUDE)
 
 foreach(dir data)
   install(DIRECTORY ${dir}/ DESTINATION share/${PROJECT_NAME}/${dir})
 endforeach()
 
-install(PROGRAMS scripts/plot_benchmark_csv.py
-  DESTINATION share/${PROJECT_NAME}/scripts)
+install(PROGRAMS scripts/plot_benchmark_csv.py DESTINATION share/${PROJECT_NAME}/scripts)

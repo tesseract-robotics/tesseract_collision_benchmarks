@@ -41,6 +41,7 @@
 #include <moveit/utils/robot_model_test_utils.h>
 #include <tesseract/common/resource_locator.h>
 #include <tesseract/common/stopwatch.h>
+#include <tesseract/common/types.h>
 #include <tesseract_collision_benchmark/types.h>
 #include <tesseract/collision/discrete_contact_manager.h>
 #include <tesseract/state_solver/state_solver.h>
@@ -57,13 +58,12 @@
 #include <tesseract/geometry/impl/mesh.h>
 #include <tesseract/geometry/impl/convex_mesh.h>
 #include <tesseract/geometry/impl/box.h>
-#include <tesseract/collision/discrete_contact_manager.h>
 #include <tesseract/collision/bullet/convex_hull_utils.h>
-#include <tesseract/state_solver/state_solver.h>
 #include <tesseract/environment/environment.h>
 #include <tesseract/environment/commands/modify_allowed_collisions_command.h>
 
-#include <tesseract_collision_benchmark/types.h>
+#include <cstddef>
+#include <memory>
 
 namespace tesseract::collision
 {
@@ -78,140 +78,140 @@ namespace tesseract::collision
 void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
                   tesseract::common::VectorIsometry3d& shape_poses,
                   const planning_scene::PlanningScenePtr& planning_scene,
-                  const DiscreteContactManager::Ptr &contact_checker,
-                  const tesseract::scene_graph::StateSolver::Ptr &state_solver,
+                  const DiscreteContactManager::Ptr& contact_checker,
+                  const tesseract::scene_graph::StateSolver::Ptr& state_solver,
                   const std::size_t num_objects,
                   CollisionObjectType type)
 {
-    CONSOLE_BRIDGE_logInform("Cluttering scene...");
+  CONSOLE_BRIDGE_logInform("Cluttering scene...");
 
-    random_numbers::RandomNumberGenerator num_generator = random_numbers::RandomNumberGenerator(123);
+  auto num_generator = random_numbers::RandomNumberGenerator(123);
 
-    // allow all robot links to be in collision for world check
-    collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
-        planning_scene->getRobotModel()->getLinkModelNames(), true) };
+  // allow all robot links to be in collision for world check
+  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
+      planning_scene->getRobotModel()->getLinkModelNames(), true) };
 
-    // set the robot state to home position
-    moveit::core::RobotState& current_state{ planning_scene->getCurrentStateNonConst() };
-    collision_detection::CollisionRequest req;
-    current_state.setToDefaultValues(current_state.getJointModelGroup("panda_arm"), "home");
-    current_state.update();
+  // set the robot state to home position
+  moveit::core::RobotState& current_state{ planning_scene->getCurrentStateNonConst() };
+  collision_detection::CollisionRequest req;
+  current_state.setToDefaultValues(current_state.getJointModelGroup("panda_arm"), "home");
+  current_state.update();
 
-    auto t_env_state =
-        state_solver->getState(tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
-                               Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
-                                                           static_cast<long>(current_state.getVariableNames().size())));
-    contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
+  auto t_env_state =
+      state_solver->getState(tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
+                             Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
+                                                         static_cast<long>(current_state.getVariableNames().size())));
+  contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
 
-    // load panda link5 as world collision object
-    std::string name;
-    shapes::ShapeConstPtr shape;
-    tesseract::geometry::Geometry::Ptr t_shape;
-    std::string kinect = "package://moveit_resources_panda_description/meshes/collision/link5.stl";
+  // load panda link5 as world collision object
+  std::string name;
+  shapes::ShapeConstPtr shape;
+  tesseract::geometry::Geometry::Ptr t_shape;
+  std::string kinect = "package://moveit_resources_panda_description/meshes/collision/link5.stl";
 
-    Eigen::Quaterniond quat;
-    Eigen::Isometry3d pos{ Eigen::Isometry3d::Identity() };
+  Eigen::Quaterniond quat;
+  Eigen::Isometry3d pos{ Eigen::Isometry3d::Identity() };
 
-    size_t added_objects{ 0 };
-    size_t i{ 0 };
-    // create random objects until as many added as desired or quit if too many attempts
-    while (added_objects < num_objects && i < num_objects * MAX_SEARCH_FACTOR_CLUTTER)
+  size_t added_objects{ 0 };
+  size_t i{ 0 };
+  // create random objects until as many added as desired or quit if too many attempts
+  while (added_objects < num_objects && i < num_objects * MAX_SEARCH_FACTOR_CLUTTER)
+  {
+    // add with random size and random position
+    pos.translation().x() = num_generator.uniformReal(-1.0, 1.0);
+    pos.translation().y() = num_generator.uniformReal(-1.0, 1.0);
+    pos.translation().z() = num_generator.uniformReal(0.0, 1.0);
+
+    quat.x() = num_generator.uniformReal(-1.0, 1.0);
+    quat.y() = num_generator.uniformReal(-1.0, 1.0);
+    quat.z() = num_generator.uniformReal(-1.0, 1.0);
+    quat.w() = num_generator.uniformReal(-1.0, 1.0);
+    quat.normalize();
+    pos.rotate(quat);
+
+    switch (type)
     {
-        // add with random size and random position
-        pos.translation().x() = num_generator.uniformReal(-1.0, 1.0);
-        pos.translation().y() = num_generator.uniformReal(-1.0, 1.0);
-        pos.translation().z() = num_generator.uniformReal(0.0, 1.0);
+      case CollisionObjectType::MESH:
+      case CollisionObjectType::CONVEX_MESH:
+      {
+        shapes::Mesh* mesh = shapes::createMeshFromResource(kinect);
+        mesh->scale(num_generator.uniformReal(0.3, 1.0));
+        shape.reset(mesh);
+        name = "mesh";
 
-        quat.x() = num_generator.uniformReal(-1.0, 1.0);
-        quat.y() = num_generator.uniformReal(-1.0, 1.0);
-        quat.z() = num_generator.uniformReal(-1.0, 1.0);
-        quat.w() = num_generator.uniformReal(-1.0, 1.0);
-        quat.normalize();
-        pos.rotate(quat);
+        // Do not need to scale since we are using data from mesh above
+        auto vertices = std::make_shared<tesseract::common::VectorVector3d>();
+        auto triangles = std::make_shared<Eigen::VectorXi>();
 
-        switch (type)
+        vertices->reserve(mesh->vertex_count);
+        triangles->resize(static_cast<Eigen::Index>(mesh->triangle_count) * 4);
+        for (std::size_t i = 0; i < mesh->vertex_count; ++i)
+          vertices->emplace_back(mesh->vertices[3 * i], mesh->vertices[(3 * i) + 1], mesh->vertices[(3 * i) + 2]);
+
+        for (std::size_t i = 0; i < mesh->triangle_count; ++i)
         {
-        case CollisionObjectType::MESH:
-        case CollisionObjectType::CONVEX_MESH:
-        {
-            shapes::Mesh* mesh = shapes::createMeshFromResource(kinect);
-            mesh->scale(num_generator.uniformReal(0.3, 1.0));
-            shape.reset(mesh);
-            name = "mesh";
-
-            // Do not need to scale since we are using data from mesh above
-            auto vertices = std::make_shared<tesseract::common::VectorVector3d>();
-            auto triangles = std::make_shared<Eigen::VectorXi>();
-
-            vertices->reserve(mesh->vertex_count);
-            triangles->resize(mesh->triangle_count * 4);
-            for (std::size_t i = 0; i < mesh->vertex_count; ++i)
-                vertices->emplace_back(mesh->vertices[3*i], mesh->vertices[(3*i) + 1], mesh->vertices[(3*i) + 2]);
-
-            for (std::size_t i = 0; i < mesh->triangle_count; ++i)
-            {
-                (*triangles)[static_cast<int>((i*4))] = 3;
-                (*triangles)[static_cast<int>((i*4) + 1)] = static_cast<int>(mesh->triangles[(i*3)]);
-                (*triangles)[static_cast<int>((i*4) + 2)] = static_cast<int>(mesh->triangles[(i*3) + 1]);
-                (*triangles)[static_cast<int>((i*4) + 3)] = static_cast<int>(mesh->triangles[(i*3) + 2]);
-            }
-
-            if (type == CollisionObjectType::MESH)
-            {
-                auto t_mesh = std::make_shared<tesseract::geometry::Mesh>(vertices, triangles);
-                t_shape = t_mesh;
-            }
-            else
-            {
-                // This is required because convex hull cannot have multiple faces on the same plane.
-                auto ch_verticies = std::make_shared<tesseract::common::VectorVector3d>();
-                auto ch_faces = std::make_shared<Eigen::VectorXi>();
-                int ch_num_faces = tesseract::collision::createConvexHull(*ch_verticies, *ch_faces, *vertices);
-                auto t_mesh = std::make_shared<tesseract::geometry::ConvexMesh>(ch_verticies, ch_faces, ch_num_faces);
-                t_shape = t_mesh;
-            }
-            break;
-        }
-        case CollisionObjectType::BOX:
-        {
-            double x = num_generator.uniformReal(0.05, 0.2);
-            double y = num_generator.uniformReal(0.05, 0.2);
-            double z = num_generator.uniformReal(0.05, 0.2);
-            shape.reset(new shapes::Box(x, y, z));
-            name = "box";
-
-            t_shape = std::make_shared<tesseract::geometry::Box>(x, y ,z);
-            break;
-        }
+          (*triangles)[static_cast<int>((i * 4))] = 3;
+          (*triangles)[static_cast<int>((i * 4) + 1)] = static_cast<int>(mesh->triangles[(i * 3)]);
+          (*triangles)[static_cast<int>((i * 4) + 2)] = static_cast<int>(mesh->triangles[(i * 3) + 1]);
+          (*triangles)[static_cast<int>((i * 4) + 3)] = static_cast<int>(mesh->triangles[(i * 3) + 2]);
         }
 
-        name.append(std::to_string(i));
-        planning_scene->getWorldNonConst()->addToObject(name, shape, pos);
-        contact_checker->addCollisionObject(name, 0, {t_shape}, {pos});
-
-        // try if it isn't in collision if yes, ok, if no remove.
-        collision_detection::CollisionResult res;
-        planning_scene->checkCollision(req, res, current_state, acm);
-
-        tesseract::collision::ContactRequest t_req(tesseract::collision::ContactTestType::FIRST);
-        tesseract::collision::ContactResultMap t_res;
-        contact_checker->contactTest(t_res, t_req);
-
-        if (!res.collision && t_res.empty())
+        if (type == CollisionObjectType::MESH)
         {
-            added_objects++;
-            shapes.push_back(t_shape);
-            shape_poses.push_back(pos);
+          auto t_mesh = std::make_shared<tesseract::geometry::Mesh>(vertices, triangles);
+          t_shape = t_mesh;
         }
         else
         {
-            CONSOLE_BRIDGE_logInform("Object was in collision, remove");
-            planning_scene->getWorldNonConst()->removeObject(name);
+          // This is required because convex hull cannot have multiple faces on the same plane.
+          auto ch_verticies = std::make_shared<tesseract::common::VectorVector3d>();
+          auto ch_faces = std::make_shared<Eigen::VectorXi>();
+          int ch_num_faces = tesseract::collision::createConvexHull(*ch_verticies, *ch_faces, *vertices);
+          auto t_mesh = std::make_shared<tesseract::geometry::ConvexMesh>(ch_verticies, ch_faces, ch_num_faces);
+          t_shape = t_mesh;
         }
-        contact_checker->removeCollisionObject(name);
-        i++;
+        break;
+      }
+      case CollisionObjectType::BOX:
+      {
+        double x = num_generator.uniformReal(0.05, 0.2);
+        double y = num_generator.uniformReal(0.05, 0.2);
+        double z = num_generator.uniformReal(0.05, 0.2);
+        shape = std::make_shared<shapes::Box>(x, y, z);
+        name = "box";
+
+        t_shape = std::make_shared<tesseract::geometry::Box>(x, y, z);
+        break;
+      }
     }
-    CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %d objects", added_objects);
+
+    name.append(std::to_string(i));
+    planning_scene->getWorldNonConst()->addToObject(name, shape, pos);
+    contact_checker->addCollisionObject(name, 0, { t_shape }, { pos });
+
+    // try if it isn't in collision if yes, ok, if no remove.
+    collision_detection::CollisionResult res;
+    planning_scene->checkCollision(req, res, current_state, acm);
+
+    tesseract::collision::ContactRequest t_req(tesseract::collision::ContactTestType::FIRST);
+    tesseract::collision::ContactResultMap t_res;
+    contact_checker->contactTest(t_res, t_req);
+
+    if (!res.collision && t_res.empty())
+    {
+      added_objects++;
+      shapes.push_back(t_shape);
+      shape_poses.push_back(pos);
+    }
+    else
+    {
+      CONSOLE_BRIDGE_logInform("Object was in collision, remove");
+      planning_scene->getWorldNonConst()->removeObject(name);
+    }
+    contact_checker->removeCollisionObject(name);
+    i++;
+  }
+  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %zu objects", added_objects);
 }
 
 /** \brief Samples valid states of the robot which can be in collision if desired.
@@ -225,62 +225,62 @@ int findStates(std::vector<moveit::core::RobotState>& robot_states,
                RobotStateSelector desired_states,
                unsigned int num_states,
                const planning_scene::PlanningScenePtr& scene,
-               const DiscreteContactManager::Ptr &contact_checker,
-               const tesseract::scene_graph::StateSolver::Ptr &state_solver)
+               const DiscreteContactManager::Ptr& contact_checker,
+               const tesseract::scene_graph::StateSolver::Ptr& state_solver)
 {
-    moveit::core::RobotState& current_state{ scene->getCurrentStateNonConst() };
-    collision_detection::CollisionRequest req;
+  moveit::core::RobotState& current_state{ scene->getCurrentStateNonConst() };
+  collision_detection::CollisionRequest req;
 
-    size_t i{ 0 };
-    int states_in_collision {0};
-    while (robot_states.size() < num_states)
+  size_t i{ 0 };
+  int states_in_collision{ 0 };
+  while (robot_states.size() < num_states)
+  {
+    current_state.setToRandomPositions();
+    current_state.update();
+    collision_detection::CollisionResult res;
+    scene->checkSelfCollision(req, res);
+
+    auto t_env_state =
+        state_solver->getState(tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
+                               Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
+                                                           static_cast<long>(current_state.getVariableNames().size())));
+    contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
+    tesseract::collision::ContactRequest t_req(tesseract::collision::ContactTestType::FIRST);
+    tesseract::collision::ContactResultMap t_res;
+    contact_checker->contactTest(t_res, t_req);
+
+    switch (desired_states)
     {
-        current_state.setToRandomPositions();
-        current_state.update();
-        collision_detection::CollisionResult res;
-        scene->checkSelfCollision(req, res);
-
-        auto t_env_state = state_solver->getState(
-            tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
-            Eigen::Map<Eigen::VectorXd>(current_state.getVariablePositions(),
-                                        static_cast<long>(current_state.getVariableNames().size())));
-        contact_checker->setCollisionObjectsTransform(t_env_state.link_transforms);
-        tesseract::collision::ContactRequest t_req(tesseract::collision::ContactTestType::FIRST);
-        tesseract::collision::ContactResultMap t_res;
-        contact_checker->contactTest(t_res, t_req);
-
-        switch (desired_states)
+      case RobotStateSelector::IN_COLLISION:
+        if (res.collision && !t_res.empty())
         {
-        case RobotStateSelector::IN_COLLISION:
-            if (res.collision && !t_res.empty())
-            {
-                robot_states.push_back(current_state);
-                ++states_in_collision;
-            }
-            break;
-        case RobotStateSelector::NOT_IN_COLLISION:
-            if (!res.collision && t_res.empty())
-                robot_states.push_back(current_state);
-            break;
-        case RobotStateSelector::RANDOM:
-            robot_states.push_back(current_state);
-            if (res.collision && !t_res.empty())
-                ++states_in_collision;
-            break;
+          robot_states.push_back(current_state);
+          ++states_in_collision;
         }
-        i++;
+        break;
+      case RobotStateSelector::NOT_IN_COLLISION:
+        if (!res.collision && t_res.empty())
+          robot_states.push_back(current_state);
+        break;
+      case RobotStateSelector::RANDOM:
+        robot_states.push_back(current_state);
+        if (res.collision && !t_res.empty())
+          ++states_in_collision;
+        break;
     }
+    i++;
+  }
 
-    return states_in_collision;
+  return states_in_collision;
 }
-}
+}  // namespace tesseract::collision
 
 /** \brief Runs a collision detection benchmark and measures the time.
-*
-*   \param trials The number of repeated collision checks for each state
-*   \param scene The planning scene
-*   \param CollisionDetector The type of collision detector
-*   \param distance Turn on distance */
+ *
+ *   \param trials The number of repeated collision checks for each state
+ *   \param scene The planning scene
+ *   \param CollisionDetector The type of collision detector
+ *   \param distance Turn on distance */
 void runCollisionDetection(unsigned int trials,
                            const planning_scene::PlanningScenePtr& scene,
                            const std::vector<moveit::core::RobotState>& states,
@@ -292,8 +292,9 @@ void runCollisionDetection(unsigned int trials,
   collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
       scene->getRobotModel()->getLinkModelNames(), true) };
 
-  std::string ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
-  std::string desc = (col_detector == tesseract::collision::CollisionDetector::FCL ? "MoveIt FCL (" + ct + ")" : "MoveIt Bullet (" + ct + ")");
+  const std::string& ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
+  std::string desc = (col_detector == tesseract::collision::CollisionDetector::FCL ? "MoveIt FCL (" + ct + ")" :
+                                                                                     "MoveIt Bullet (" + ct + ")");
 
   if (col_detector == tesseract::collision::CollisionDetector::FCL)
   {
@@ -316,7 +317,7 @@ void runCollisionDetection(unsigned int trials,
   }
   else
   {
-    req.contacts = true; // If this is not true it will not generate more than one contact in MoveIt
+    req.contacts = true;  // If this is not true it will not generate more than one contact in MoveIt
     req.max_contacts = 300;
     req.max_contacts_per_pair = 300;
   }
@@ -325,7 +326,7 @@ void runCollisionDetection(unsigned int trials,
   stopwatch.start();
   for (unsigned int i = 0; i < trials; ++i)
   {
-    for (auto& state : states)
+    for (const auto& state : states)
     {
       res.clear();
       scene->checkCollision(req, res, state);
@@ -340,33 +341,33 @@ void runCollisionDetection(unsigned int trials,
 
   const double checks_per_second = static_cast<double>(trials * states.size()) / duration;
   const std::size_t total_num_checks = trials * states.size();
-  const std::size_t contact_count = (res.collision == true && res.contact_count == 0) ? 1 : res.contact_count;
-  CONSOLE_BRIDGE_logInform("%s, %lf, %ld, %ld", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  const std::size_t contact_count = (res.collision && res.contact_count == 0) ? 1 : res.contact_count;
+  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
 
   // color collided objects red
-//  for (auto& contact : res.contacts)
-//  {
-//    ROS_INFO_STREAM("Between: " << contact.first.first << " and " << contact.first.second);
-//    std_msgs::ColorRGBA red;
-//    red.a = 0.8f;
-//    red.r = 1;
-//    red.g = 0;
-//    red.b = 0;
-//    scene->setObjectColor(contact.first.first, red);
-//    scene->setObjectColor(contact.first.second, red);
-//  }
+  //  for (auto& contact : res.contacts)
+  //  {
+  //    ROS_INFO_STREAM("Between: " << contact.first.first << " and " << contact.first.second);
+  //    std_msgs::ColorRGBA red;
+  //    red.a = 0.8f;
+  //    red.r = 1;
+  //    red.g = 0;
+  //    red.b = 0;
+  //    scene->setObjectColor(contact.first.first, red);
+  //    scene->setObjectColor(contact.first.second, red);
+  //  }
 
   scene->setCurrentState(states.back());
 }
 
 /** \brief Runs a collision detection benchmark and measures the time.
-*
-*   \param name Name to give the benchmark
-*   \param trials The number of repeated collision checks for each state
-*   \param checker Tesseract contact checker
-*   \param state A vector of collision object transforms
-*   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
-*   \param distance Turn on distance */
+ *
+ *   \param name Name to give the benchmark
+ *   \param trials The number of repeated collision checks for each state
+ *   \param checker Tesseract contact checker
+ *   \param state A vector of collision object transforms
+ *   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
+ *   \param distance Turn on distance */
 void runTesseractCollisionDetection(const std::string& name,
                                     unsigned int trials,
                                     tesseract::collision::DiscreteContactManager& checker,
@@ -376,11 +377,10 @@ void runTesseractCollisionDetection(const std::string& name,
                                     bool contacts = false,
                                     bool is_physx = false)
 {
-//  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
-//      scene->getRobotModel()->getLinkModelNames(), true) };
+  //  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
+  //      scene->getRobotModel()->getLinkModelNames(), true) };
 
-
-  std::string ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
+  const std::string& ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
   std::string desc = name + "(" + ct + ")";
 
   tesseract::collision::ContactResultMap res;
@@ -396,7 +396,7 @@ void runTesseractCollisionDetection(const std::string& name,
     // sleep if they have not moved in 3-4 contact test requests.
     for (unsigned int i = 0; i < trials; ++i)
     {
-      for (auto& state : states)
+      for (const auto& state : states)
       {
         res.clear();
         checker.setCollisionObjectsTransform(state);
@@ -408,7 +408,7 @@ void runTesseractCollisionDetection(const std::string& name,
   {
     // This is more representative of moveit because the state transforms only get updated the first time it is
     // called and does not update them for subsequent request becasuse the joint values have not change
-    for (auto& state : states)
+    for (const auto& state : states)
     {
       checker.setCollisionObjectsTransform(state);
       for (unsigned int i = 0; i < trials; ++i)
@@ -429,10 +429,10 @@ void runTesseractCollisionDetection(const std::string& name,
   for (const auto& c : res)
     contact_count += c.second.size();
 
-  CONSOLE_BRIDGE_logInform("%s, %lf, %ld, %ld", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
 }
 
-int main(int argc, char** argv)
+int main(int /*argc*/, char** /*argv*/)
 {
   console_bridge::setLogLevel(console_bridge::LogLevel::CONSOLE_BRIDGE_LOG_INFO);
 
@@ -448,8 +448,6 @@ int main(int argc, char** argv)
   collision_detection::CollisionRequest req;
   collision_detection::CollisionResult res;
   std::vector<std::string> link_names = robot_model->getLinkModelNames();
-  const std::vector<tesseract::common::LinkId> link_ids =
-      tesseract::common::toIds<tesseract::common::LinkId>(link_names);
   collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(link_names, true) };
   planning_scene->checkCollision(req, res, planning_scene->getCurrentState(), acm);
 
@@ -465,11 +463,12 @@ int main(int argc, char** argv)
 
   // Exclude robot collisions
   tesseract::common::AllowedCollisionMatrix modify_ac;
-  for (std::size_t i = 0; i < link_ids.size() - 1; ++i)
-    for (std::size_t j = i + 1; j < link_ids.size(); ++j)
-      modify_ac.addAllowedCollision(link_ids[i], link_ids[j], "exclude robot links");
+  for (std::size_t i = 0; i < link_names.size() - 1; ++i)
+    for (std::size_t j = i + 1; j < link_names.size(); ++j)
+      modify_ac.addAllowedCollision(link_names[i], link_names[j], "exclude robot links");
 
-  auto cmd = std::make_shared<tesseract::environment::ModifyAllowedCollisionsCommand>(modify_ac, tesseract::environment::ModifyAllowedCollisionsType::ADD);
+  auto cmd = std::make_shared<tesseract::environment::ModifyAllowedCollisionsCommand>(
+      modify_ac, tesseract::environment::ModifyAllowedCollisionsType::ADD);
   tesseract_env.applyCommand(cmd);
 
   tesseract::scene_graph::StateSolver::Ptr tesseract_state_solver = tesseract_env.getStateSolver();
@@ -483,8 +482,16 @@ int main(int argc, char** argv)
 
   std::vector<tesseract::geometry::Geometry::ConstPtr> shapes;
   tesseract::common::VectorIsometry3d shape_poses;
-  clutterWorld(shapes, shape_poses, planning_scene, contact_checkers.front()->clone(), tesseract_state_solver->clone(), 50, tesseract::collision::CollisionObjectType::CONVEX_MESH);
+  clutterWorld(shapes,
+               shape_poses,
+               planning_scene,
+               contact_checkers.front()->clone(),
+               tesseract_state_solver->clone(),
+               50,
+               tesseract::collision::CollisionObjectType::CONVEX_MESH);
 
+  const std::vector<tesseract::common::LinkId> link_ids =
+      tesseract::common::toIds<tesseract::common::LinkId>(link_names);
   for (auto& contact_checker : contact_checkers)
   {
     contact_checker->addCollisionObject("world", 0, shapes, shape_poses);
@@ -502,7 +509,12 @@ int main(int argc, char** argv)
 
   std::vector<moveit::core::RobotState> sampled_states;
   std::vector<tesseract::common::LinkIdTransformMap> t_sampled_states;
-  int states_in_collision = findStates(sampled_states, tesseract::collision::RobotStateSelector::IN_COLLISION , 50, planning_scene, contact_checkers.front()->clone(), tesseract_state_solver->clone());
+  int states_in_collision = findStates(sampled_states,
+                                       tesseract::collision::RobotStateSelector::IN_COLLISION,
+                                       50,
+                                       planning_scene,
+                                       contact_checkers.front()->clone(),
+                                       tesseract_state_solver->clone());
 
   t_sampled_states.clear();
   for (auto& s : sampled_states)
@@ -510,60 +522,204 @@ int main(int argc, char** argv)
     auto t_env_state = tesseract_state_solver->getState(
         tesseract::common::toIds<tesseract::common::JointId>(current_state.getVariableNames()),
         Eigen::Map<Eigen::VectorXd>(s.getVariablePositions(), static_cast<long>(s.getVariableNames().size())));
-    t_env_state.link_transforms.erase("world");
-    t_sampled_states.push_back(t_env_state.link_transforms);
+    auto t_transforms = t_env_state.link_transforms;
+    t_transforms.erase("world");
+    t_sampled_states.push_back(t_transforms);
   }
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
 
-
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %u out of %u states in collision", states_in_collision, 50);
+  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %d "
+                           "out of %d states in collision",
+                           states_in_collision,
+                           50);
   CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::FIRST, false, false);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::ALL, false, false);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::FIRST, false, false);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::ALL, false, false);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::FIRST,
+                        false,
+                        false);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::ALL,
+                        false,
+                        false);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::FIRST,
+                        false,
+                        false);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::ALL,
+                        false,
+                        false);
 
   for (auto& contact_checker : contact_checkers)
   {
-    const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::FIRST, false, false, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::CLOSEST, false, false, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::ALL, false, false, is_physx);
+    const bool is_physx{ contact_checker->getName() == "PhysxDiscreteManager" };
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::FIRST,
+                                   false,
+                                   false,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::CLOSEST,
+                                   false,
+                                   false,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::ALL,
+                                   false,
+                                   false,
+                                   is_physx);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %u out of %u states in collision", states_in_collision, 50);
+  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %d out of %d states "
+                           "in collision",
+                           states_in_collision,
+                           50);
   CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::FIRST, false, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::ALL, false, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::FIRST, false, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::ALL, false, true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::FIRST,
+                        false,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::ALL,
+                        false,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::FIRST,
+                        false,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::ALL,
+                        false,
+                        true);
 
   for (auto& contact_checker : contact_checkers)
   {
-    const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::FIRST, false, true, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::CLOSEST, false, true, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::ALL, false, true, is_physx);
+    const bool is_physx{ contact_checker->getName() == "PhysxDiscreteManager" };
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::FIRST,
+                                   false,
+                                   true,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::CLOSEST,
+                                   false,
+                                   true,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::ALL,
+                                   false,
+                                   true,
+                                   is_physx);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, 0.2m), %u out of %u states in collision", states_in_collision, t_sampled_states.size());
+  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, "
+                           "0.2m), %d out of %zu states in collision",
+                           states_in_collision,
+                           t_sampled_states.size());
   CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0.2);
 
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::FIRST, true, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::BULLET, tesseract::collision::ContactTestType::ALL, true, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::FIRST, true, true);
-  runCollisionDetection(trials, planning_scene, sampled_states, tesseract::collision::CollisionDetector::FCL, tesseract::collision::ContactTestType::ALL, true, true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::FIRST,
+                        true,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::BULLET,
+                        tesseract::collision::ContactTestType::ALL,
+                        true,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::FIRST,
+                        true,
+                        true);
+  runCollisionDetection(trials,
+                        planning_scene,
+                        sampled_states,
+                        tesseract::collision::CollisionDetector::FCL,
+                        tesseract::collision::ContactTestType::ALL,
+                        true,
+                        true);
   for (auto& contact_checker : contact_checkers)
   {
-    const bool is_physx { contact_checker->getName() == "PhysxDiscreteManager"};
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::FIRST, true, true, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::CLOSEST, true, true, is_physx);
-    runTesseractCollisionDetection(contact_checker->getName(), trials, *contact_checker, t_sampled_states, tesseract::collision::ContactTestType::ALL, true, true, is_physx);
+    const bool is_physx{ contact_checker->getName() == "PhysxDiscreteManager" };
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::FIRST,
+                                   true,
+                                   true,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::CLOSEST,
+                                   true,
+                                   true,
+                                   is_physx);
+    runTesseractCollisionDetection(contact_checker->getName(),
+                                   trials,
+                                   *contact_checker,
+                                   t_sampled_states,
+                                   tesseract::collision::ContactTestType::ALL,
+                                   true,
+                                   true,
+                                   is_physx);
   }
 
   return 0;
