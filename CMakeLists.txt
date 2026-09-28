@@ -9,7 +9,6 @@ find_package(moveit_core REQUIRED)
 find_package(random_numbers REQUIRED)
 
 find_package(Eigen3 REQUIRED)
-find_package(console_bridge REQUIRED)
 find_package(tesseract REQUIRED COMPONENTS common geometry urdf collision collision_bullet collision_fcl environment)
 find_package(tesseract_collision_coal REQUIRED)
 # find_package(tesseract_collision_physx REQUIRED)

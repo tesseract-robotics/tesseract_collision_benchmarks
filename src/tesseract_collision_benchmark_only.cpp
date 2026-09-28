@@ -37,6 +37,7 @@
 #include <tesseract/common/resource_locator.h>
 #include <tesseract/common/stopwatch.h>
 #include <tesseract/common/types.h>
+#include <tesseract/common/logging.h>
 #include <tesseract/common/utils.h>
 #include <tesseract_collision_benchmark/types.h>
 #include <tesseract/collision/discrete_contact_manager.h>
@@ -63,7 +64,6 @@
 #include <tesseract/environment/commands/modify_allowed_collisions_command.h>
 
 #include <random_numbers/random_numbers.h>
-#include <console_bridge/console.h>
 
 #include <algorithm>
 #include <fstream>
@@ -95,7 +95,7 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
                   const std::size_t num_objects,
                   CollisionObjectType type)
 {
-  CONSOLE_BRIDGE_logInform("Cluttering scene...");
+  TESSERACT_LOG_INFO("Cluttering scene...");
 
   auto num_generator = random_numbers::RandomNumberGenerator(123);
 
@@ -172,12 +172,12 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
     }
     else
     {
-      CONSOLE_BRIDGE_logInform("Object was in collision, remove");
+      TESSERACT_LOG_INFO("Object was in collision, remove");
     }
     contact_checker->removeCollisionObject(name);
     i++;
   }
-  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %zu objects", added_objects);
+  TESSERACT_LOG_INFO("Cluttered the planning scene with {} objects", added_objects);
 }
 
 /** \brief Samples valid states of the robot which can be in collision if desired.
@@ -427,8 +427,7 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
              << "," << total_num_checks << "," << contact_count << ","
              << std::quoted(dutyCycleName(effective_duty_cycle)) << "\n";
 
-  CONSOLE_BRIDGE_logInform(
-      "%-40s | %17.0f | %16zu | %12zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  TESSERACT_LOG_INFO("{:<40} | {:>17.0f} | {:>16} | {:>12}", desc, checks_per_second, total_num_checks, contact_count);
 }
 
 /** \brief Runs a continuous collision detection benchmark and measures the time.
@@ -557,13 +556,12 @@ void runTesseractContinuousCollisionDetection(
              << "," << total_num_checks << "," << contact_count << "," << std::quoted(dutyCycleName(duty_cycle))
              << "\n";
 
-  CONSOLE_BRIDGE_logInform(
-      "%-40s | %17.0f | %16zu | %12zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  TESSERACT_LOG_INFO("{:<40} | {:>17.0f} | {:>16} | {:>12}", desc, checks_per_second, total_num_checks, contact_count);
 }
 
 int main(int argc, char** argv)
 {
-  console_bridge::setLogLevel(console_bridge::LogLevel::CONSOLE_BRIDGE_LOG_INFO);
+  tesseract::common::getLogger()->set_level(spdlog::level::info);
   const unsigned int trials = 1000;
   const unsigned int num_states = 50;
 
@@ -591,7 +589,7 @@ int main(int argc, char** argv)
     auto require_value = [&](const std::string& hint) -> std::string {
       if (i + 1 >= argc)
       {
-        CONSOLE_BRIDGE_logError("Missing value for %s. %s", arg.c_str(), hint.c_str());
+        TESSERACT_LOG_ERROR("Missing value for {}. {}", arg, hint);
         std::exit(1);
       }
       return argv[++i];
@@ -602,7 +600,7 @@ int main(int argc, char** argv)
       mode = require_value("Use: " + mode_values);
       if (mode != "discrete" && mode != "continuous" && mode != "both")
       {
-        CONSOLE_BRIDGE_logError("Invalid mode '%s'. Use: %s", mode.c_str(), mode_values.c_str());
+        TESSERACT_LOG_ERROR("Invalid mode '{}'. Use: {}", mode, mode_values);
         return 1;
       }
     }
@@ -611,7 +609,7 @@ int main(int argc, char** argv)
       test_type = require_value("Use: " + test_type_values);
       if (test_type != "first" && test_type != "closest" && test_type != "all" && test_type != "all-types")
       {
-        CONSOLE_BRIDGE_logError("Invalid test-type '%s'. Use: %s", test_type.c_str(), test_type_values.c_str());
+        TESSERACT_LOG_ERROR("Invalid test-type '{}'. Use: {}", test_type, test_type_values);
         return 1;
       }
     }
@@ -635,7 +633,7 @@ int main(int argc, char** argv)
         duty_cycle.cycle = DutyCycle::TRAJECTORY;
       else
       {
-        CONSOLE_BRIDGE_logError("Unknown duty cycle '%s'. Expected %s.", value.c_str(), duty_cycle_values.c_str());
+        TESSERACT_LOG_ERROR("Unknown duty cycle '{}'. Expected {}.", value, duty_cycle_values);
         return 1;
       }
     }
@@ -644,7 +642,7 @@ int main(int argc, char** argv)
       const int value = std::stoi(require_value("Provide a positive integer."));
       if (value < 1)
       {
-        CONSOLE_BRIDGE_logError("--waypoints must be at least 1, got %d.", value);
+        TESSERACT_LOG_ERROR("--waypoints must be at least 1, got {}.", value);
         return 1;
       }
       duty_cycle.waypoints = static_cast<unsigned int>(value);
@@ -657,7 +655,7 @@ int main(int argc, char** argv)
       // written into the scenario label and mislabel every row the run produces.
       if (!(parsed >= 0.0 && parsed < 1e6))
       {
-        CONSOLE_BRIDGE_logError("--margin must be a finite, non-negative distance in metres, got '%s'.", value.c_str());
+        TESSERACT_LOG_ERROR("--margin must be a finite, non-negative distance in metres, got '{}'.", value);
         return 1;
       }
       distance_margin = parsed;
@@ -678,7 +676,7 @@ int main(int argc, char** argv)
 
       if (manager_filters.empty())
       {
-        CONSOLE_BRIDGE_logError("No manager names found in '%s'.", value.c_str());
+        TESSERACT_LOG_ERROR("No manager names found in '{}'.", value);
         return 1;
       }
     }
@@ -714,7 +712,7 @@ int main(int argc, char** argv)
     }
     else if (!arg.empty() && arg[0] == '-')
     {
-      CONSOLE_BRIDGE_logError("Unknown option '%s'. Use --help for usage.", arg.c_str());
+      TESSERACT_LOG_ERROR("Unknown option '{}'. Use --help for usage.", arg);
       return 1;
     }
     else
@@ -735,10 +733,10 @@ int main(int argc, char** argv)
 
     if (!matches_any)
     {
-      CONSOLE_BRIDGE_logError("No manager matches '%s'. Available managers: BulletDiscreteBVHManager, "
-                              "BulletDiscreteSimpleManager, FCLDiscreteBVHManager, CoalDiscreteBVHManager, "
-                              "BulletCastBVHManager, CoalCastBVHManager",
-                              filter.c_str());
+      TESSERACT_LOG_ERROR("No manager matches '{}'. Available managers: BulletDiscreteBVHManager, "
+                          "BulletDiscreteSimpleManager, FCLDiscreteBVHManager, CoalDiscreteBVHManager, "
+                          "BulletCastBVHManager, CoalCastBVHManager",
+                          filter);
       return 1;
     }
   }
@@ -746,7 +744,7 @@ int main(int argc, char** argv)
   if (seed >= 0)
   {
     tesseract::common::mersenne.seed(static_cast<std::mt19937::result_type>(seed));
-    CONSOLE_BRIDGE_logInform("Using fixed RNG seed: %d", seed);
+    TESSERACT_LOG_INFO("Using fixed RNG seed: {}", seed);
   }
 
   // --clone models TrajOpt cloning the manager once per state pair. Under sweep the loop order
@@ -762,9 +760,8 @@ int main(int argc, char** argv)
   if (duty_cycle_implied_by_clone)
     duty_cycle.cycle = DutyCycle::REPEAT;
 
-  CONSOLE_BRIDGE_logInform("Duty cycle: %s%s",
-                           dutyCycleName(duty_cycle).c_str(),
-                           duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
+  TESSERACT_LOG_INFO(
+      "Duty cycle: {}{}", dutyCycleName(duty_cycle), duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
 
   const bool run_discrete = (mode == "discrete" || mode == "both");
   const bool run_continuous = (mode == "continuous" || mode == "both");
@@ -773,9 +770,9 @@ int main(int argc, char** argv)
   // cycle when continuous mode will actually run.
   if (run_continuous && duty_cycle.cycle != DutyCycle::REPEAT && clone_per_state)
   {
-    CONSOLE_BRIDGE_logError("--clone and --duty-cycle %s are mutually exclusive: an advancing duty cycle visits "
-                            "every state pair once per trial, so cloning per visit would dominate the measurement.",
-                            dutyCycleName(duty_cycle).c_str());
+    TESSERACT_LOG_ERROR("--clone and --duty-cycle {} are mutually exclusive: an advancing duty cycle visits "
+                        "every state pair once per trial, so cloning per visit would dominate the measurement.",
+                        dutyCycleName(duty_cycle));
     return 1;
   }
 
@@ -790,10 +787,10 @@ int main(int argc, char** argv)
   // proportionally fewer passes over them.
   if (duty_cycle.cycle == DutyCycle::TRAJECTORY && (trials % duty_cycle.waypoints) != 0)
   {
-    CONSOLE_BRIDGE_logError("--waypoints %u does not divide the %u trials per state, so the run would not perform "
-                            "the same number of checks as the other duty cycles.",
-                            duty_cycle.waypoints,
-                            trials);
+    TESSERACT_LOG_ERROR("--waypoints {} does not divide the {} trials per state, so the run would not perform "
+                        "the same number of checks as the other duty cycles.",
+                        duty_cycle.waypoints,
+                        trials);
     return 1;
   }
 
@@ -804,7 +801,7 @@ int main(int argc, char** argv)
   std::ofstream csv_file(csv_path);
   if (!csv_file.is_open())
   {
-    CONSOLE_BRIDGE_logError("Failed to open CSV file: %s", csv_path.c_str());
+    TESSERACT_LOG_ERROR("Failed to open CSV file: {}", csv_path);
     return 1;
   }
 
@@ -854,7 +851,7 @@ int main(int argc, char** argv)
     contact_checker->setActiveCollisionObjects(link_ids);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world");
+  TESSERACT_LOG_INFO("Starting benchmark: Robot in cluttered world, in collision with world");
 
   sleep(1);
 
@@ -882,9 +879,8 @@ int main(int argc, char** argv)
     for (auto& s : t_trajectory_states)
       s.erase("world");
 
-    CONSOLE_BRIDGE_logInform("Expanded %zu sampled states into %zu trajectory waypoints",
-                             t_sampled_states.size(),
-                             t_trajectory_states.size());
+    TESSERACT_LOG_INFO(
+        "Expanded {} sampled states into {} trajectory waypoints", t_sampled_states.size(), t_trajectory_states.size());
   }
 
   const std::vector<tesseract::common::LinkIdTransformMap>& bench_states =
@@ -917,11 +913,11 @@ int main(int argc, char** argv)
     scenario << "Discrete: Contact Only, " << states_in_collision << " out of " << t_sampled_states.size()
              << " states in collision";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -963,18 +959,18 @@ int main(int argc, char** argv)
                                        is_physx,
                                        duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     scenario.str("");
     scenario << "Discrete: Penetration Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
              << " states in collision";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -1016,18 +1012,18 @@ int main(int argc, char** argv)
                                        is_physx,
                                        duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     scenario.str("");
     scenario << "Discrete: Distance (" << margin_label << ") Enabled, " << states_in_collision << " out of "
              << t_sampled_states.size() << " states in collision";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& contact_checker : contact_checkers)
       contact_checker->setDefaultCollisionMargin(distance_margin);
@@ -1072,18 +1068,18 @@ int main(int argc, char** argv)
                                        is_physx,
                                        duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     scenario.str("");
     scenario << "Discrete: Distance (" << margin_label << ") and Penetration Enabled, " << states_in_collision
              << " out of " << t_sampled_states.size() << " states in collision";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -1125,8 +1121,8 @@ int main(int argc, char** argv)
                                        is_physx,
                                        duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
   }  // run_discrete
 
   // ************************************************
@@ -1156,7 +1152,7 @@ int main(int argc, char** argv)
     for (std::size_t i = 0; i + 1 < bench_states.size(); ++i)
       state_pairs.emplace_back(bench_states[i], bench_states[i + 1]);
 
-    CONSOLE_BRIDGE_logInform("Starting continuous collision benchmarks with %zu state pairs", state_pairs.size());
+    TESSERACT_LOG_INFO("Starting continuous collision benchmarks with {} state pairs", state_pairs.size());
 
     sleep(1);
 
@@ -1167,11 +1163,11 @@ int main(int argc, char** argv)
     scenario.str("");
     scenario << "Continuous: Contact Only, " << state_pairs.size() << " state pairs";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& checker : cast_checkers)
     {
@@ -1215,18 +1211,18 @@ int main(int argc, char** argv)
                                                  clone_per_state,
                                                  duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     // Scenario 2: Continuous Penetration Enabled
     scenario.str("");
     scenario << "Continuous: Penetration Enabled, " << state_pairs.size() << " state pairs";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& checker : cast_checkers)
     {
@@ -1270,8 +1266,8 @@ int main(int argc, char** argv)
                                                  clone_per_state,
                                                  duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     // Scenario 3: Continuous Distance Enabled
     for (auto& checker : cast_checkers)
@@ -1280,11 +1276,11 @@ int main(int argc, char** argv)
     scenario.str("");
     scenario << "Continuous: Distance (" << margin_label << ") Enabled, " << state_pairs.size() << " state pairs";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& checker : cast_checkers)
     {
@@ -1328,19 +1324,19 @@ int main(int argc, char** argv)
                                                  clone_per_state,
                                                  duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     // Scenario 4: Continuous Distance and Penetration Enabled
     scenario.str("");
     scenario << "Continuous: Distance (" << margin_label << ") and Penetration Enabled, " << state_pairs.size()
              << " state pairs";
 
-    CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
-    CONSOLE_BRIDGE_logInform(
-        "%-40s | %17s | %16s | %12s", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("Starting scenario: {}", scenario.str());
+    TESSERACT_LOG_INFO(
+        "{:<40} | {:>17} | {:>16} | {:>12}", "Description", "Checks Per Second", "Total Num Checks", "Num Contacts");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
 
     for (auto& checker : cast_checkers)
     {
@@ -1384,11 +1380,11 @@ int main(int argc, char** argv)
                                                  clone_per_state,
                                                  duty_cycle);
     }
-    CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
-                             "-----");
+    TESSERACT_LOG_INFO("-----------------------------------------+-------------------+------------------+--------"
+                       "-----");
   }  // run_continuous
 
-  CONSOLE_BRIDGE_logInform("CSV results written to %s", csv_path.c_str());
+  TESSERACT_LOG_INFO("CSV results written to {}", csv_path);
 
   return 0;
 }
