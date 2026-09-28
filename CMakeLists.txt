@@ -47,6 +47,18 @@ target_include_directories(${PROJECT_NAME}_only PRIVATE "$<BUILD_INTERFACE:${CMA
 
 configure_package(NAMESPACE tesseract TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_only)
 
+# TESSERACT_ENABLE_TESTING, not BUILD_TESTING: the workspace build script passes the former, and
+# every sibling package gates on it. BUILD_TESTING happens to be ON in this package's cache only
+# because a dependency's config calls include(CTest) transitively, which is a side effect this
+# package should not depend on.
+if(TESSERACT_ENABLE_TESTING)
+  enable_testing()
+  add_test(NAME cli_contract COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test/cli_contract.bash
+                                     $<TARGET_FILE:${PROJECT_NAME}_only>)
+  # Several cases run a full benchmark, and the trial count is compiled in.
+  set_tests_properties(cli_contract PROPERTIES TIMEOUT 900)
+endif()
+
 # Mark cpp header files for installation
 install(
   DIRECTORY include/${PROJECT_NAME}
