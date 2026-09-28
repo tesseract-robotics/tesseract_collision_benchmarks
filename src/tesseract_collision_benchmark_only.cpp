@@ -276,6 +276,62 @@ buildTrajectoryStates(const std::vector<tesseract::scene_graph::SceneState::Join
 
   return trajectory;
 }
+
+/** \brief One cast state pair, already split into the moving and static links a cast check needs.
+ *
+ *  Active links carry a cast (start, end) transform pair; every other link carries a single static
+ *  transform. Parallel arrays rather than maps: the manager looks each id up regardless, so a map
+ *  form would only add a hash lookup per link to find the second pose. */
+struct SplitCastState
+{
+  std::vector<tesseract::common::LinkId> cast_ids;
+  tesseract::common::VectorIsometry3d cast_pose1;
+  tesseract::common::VectorIsometry3d cast_pose2;
+  std::vector<tesseract::common::LinkId> static_ids;
+  tesseract::common::VectorIsometry3d static_poses;
+};
+
+/** \brief Splits consecutive states into cast pairs, once, outside any timed loop.
+ *
+ *  Pair i runs from @p states i to i+1; the result has one fewer entry than @p states, or none if
+ *  there are fewer than two. A caller such as TrajOpt already holds its transforms in this shape,
+ *  so splitting inside the timed loop would charge every backend for work it does not do.
+ *
+ *  \param states States to pair up, in order
+ *  \param active_links Links that move, and so need a cast transform rather than a static one */
+std::vector<SplitCastState> buildSplitCastStates(const std::vector<tesseract::common::LinkIdTransformMap>& states,
+                                                 const std::vector<tesseract::common::LinkId>& active_links)
+{
+  std::vector<SplitCastState> split_states;
+  if (states.size() < 2)
+    return split_states;
+
+  const std::unordered_set<tesseract::common::LinkId> active_link_set(active_links.begin(), active_links.end());
+  split_states.reserve(states.size() - 1);
+  for (std::size_t i = 0; i + 1 < states.size(); ++i)
+  {
+    const auto& pose1 = states[i];
+    const auto& pose2 = states[i + 1];
+    SplitCastState split;
+    for (const auto& tf : pose1)
+    {
+      if (active_link_set.count(tf.first) != 0)
+      {
+        split.cast_ids.push_back(tf.first);
+        split.cast_pose1.push_back(tf.second);
+        split.cast_pose2.push_back(pose2.at(tf.first));
+      }
+      else
+      {
+        split.static_ids.push_back(tf.first);
+        split.static_poses.push_back(tf.second);
+      }
+    }
+    split_states.push_back(std::move(split));
+  }
+
+  return split_states;
+}
 }  // namespace tesseract::collision
 
 /** \brief Whether a contact manager name matches a filter list.
@@ -444,24 +500,21 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
  *   \param name Name to give the benchmark
  *   \param trials The number of repeated collision checks for each state pair
  *   \param checker Tesseract continuous contact checker
- *   \param state_pairs A vector of start/end collision object transform pairs
+ *   \param split_states Cast state pairs, already split into moving and static links
  *   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
  *   \param distance Turn on distance
  *   \param penetration Turn on penetration */
-void runTesseractContinuousCollisionDetection(
-    std::ostream& csv_stream,
-    const std::string& name,
-    const std::string& scenario,
-    unsigned int trials,
-    tesseract::collision::ContinuousContactManager& checker,
-    const std::vector<std::pair<tesseract::common::LinkIdTransformMap, tesseract::common::LinkIdTransformMap>>&
-        state_pairs,
-    const std::vector<tesseract::common::LinkId>& active_links,
-    tesseract::collision::ContactTestType test_type,
-    bool distance,
-    bool penetration,
-    bool clone_per_state,
-    const DutyCycleSpec& duty_cycle)
+void runTesseractContinuousCollisionDetection(std::ostream& csv_stream,
+                                              const std::string& name,
+                                              const std::string& scenario,
+                                              unsigned int trials,
+                                              tesseract::collision::ContinuousContactManager& checker,
+                                              const std::vector<tesseract::collision::SplitCastState>& split_states,
+                                              tesseract::collision::ContactTestType test_type,
+                                              bool distance,
+                                              bool penetration,
+                                              bool clone_per_state,
+                                              const DutyCycleSpec& duty_cycle)
 {
   std::string ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
   std::string desc = name + "(" + ct + ")";
@@ -471,45 +524,8 @@ void runTesseractContinuousCollisionDetection(
   req.calculate_distance = distance;
   req.calculate_penetration = penetration;
 
-  // Pre-compute active link ID set for fast lookup
-  std::unordered_set<tesseract::common::LinkId> active_link_set(active_links.begin(), active_links.end());
-
-  // Active links carry a cast (moving) transform, everything else a static one. The split is done
-  // once here rather than per check: a caller such as TrajOpt already holds its transforms in this
-  // shape, so splitting inside the timed loop would charge every backend for work it does not do.
-  // Parallel arrays rather than maps: the manager looks each id up regardless, so the map forms only
-  // add a hash lookup per link to find the second pose.
-  struct SplitState
-  {
-    std::vector<tesseract::common::LinkId> cast_ids;
-    tesseract::common::VectorIsometry3d cast_pose1;
-    tesseract::common::VectorIsometry3d cast_pose2;
-    std::vector<tesseract::common::LinkId> static_ids;
-    tesseract::common::VectorIsometry3d static_poses;
-  };
-  std::vector<SplitState> split_states;
-  split_states.reserve(state_pairs.size());
-  for (const auto& [pose1, pose2] : state_pairs)
-  {
-    SplitState split;
-    for (const auto& tf : pose1)
-    {
-      if (active_link_set.count(tf.first) != 0)
-      {
-        split.cast_ids.push_back(tf.first);
-        split.cast_pose1.push_back(tf.second);
-        split.cast_pose2.push_back(pose2.at(tf.first));
-      }
-      else
-      {
-        split.static_ids.push_back(tf.first);
-        split.static_poses.push_back(tf.second);
-      }
-    }
-    split_states.push_back(std::move(split));
-  }
-
-  auto apply_state = [](tesseract::collision::ContinuousContactManager& mgr, const SplitState& split) {
+  auto apply_state = [](tesseract::collision::ContinuousContactManager& mgr,
+                        const tesseract::collision::SplitCastState& split) {
     // Two bulk calls rather than one per link, which is the shape a caller such as TrajOpt already
     // holds its transforms in. Only a backend that overrides the vector overloads gains from it: a
     // manager that defers its broadphase update to the end of a call then refits once per call
@@ -558,8 +574,8 @@ void runTesseractContinuousCollisionDetection(
   stopwatch.stop();
   const double duration = stopwatch.elapsedSeconds();
 
-  const double checks_per_second = static_cast<double>(trials * state_pairs.size()) / duration;
-  const std::size_t total_num_checks = trials * state_pairs.size();
+  const double checks_per_second = static_cast<double>(trials * split_states.size()) / duration;
+  const std::size_t total_num_checks = trials * split_states.size();
 
   std::size_t contact_count = 0;
   for (const auto& c : res)
@@ -1249,14 +1265,15 @@ int main(int argc, char** argv)
       checker->setActiveCollisionObjects(link_ids);
     }
 
-    // Build state pairs from consecutive states of whichever vector this duty cycle walks. Under
-    // trajectory that shortens the swept volume as well as the jump between checks, which is what a
-    // cast check against consecutive trajectory waypoints actually looks like.
-    std::vector<std::pair<tesseract::common::LinkIdTransformMap, tesseract::common::LinkIdTransformMap>> state_pairs;
-    for (std::size_t i = 0; i + 1 < bench_states.size(); ++i)
-      state_pairs.emplace_back(bench_states[i], bench_states[i + 1]);
+    // Pair consecutive states of whichever vector this duty cycle walks. Under trajectory that
+    // shortens the swept volume as well as the jump between checks, which is what a cast check
+    // against consecutive trajectory waypoints actually looks like. Split once here rather than
+    // inside each benchmark call: twelve calls share one split, and a large --waypoints count makes
+    // rebuilding it per call both slow and large.
+    const std::vector<tesseract::collision::SplitCastState> split_states =
+        tesseract::collision::buildSplitCastStates(bench_states, link_ids);
 
-    TESSERACT_LOG_INFO("Starting continuous collision benchmarks with {} state pairs", state_pairs.size());
+    TESSERACT_LOG_INFO("Starting continuous collision benchmarks with {} state pairs", split_states.size());
 
     sleep(1);
 
@@ -1281,8 +1298,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  false,
                                                  false,
@@ -1294,8 +1310,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  false,
                                                  false,
@@ -1307,8 +1322,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  false,
                                                  false,
@@ -1336,8 +1350,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  false,
                                                  true,
@@ -1349,8 +1362,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  false,
                                                  true,
@@ -1362,8 +1374,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  false,
                                                  true,
@@ -1394,8 +1405,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  true,
                                                  false,
@@ -1407,8 +1417,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  true,
                                                  false,
@@ -1420,8 +1429,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  true,
                                                  false,
@@ -1450,8 +1458,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::FIRST,
                                                  true,
                                                  true,
@@ -1463,8 +1470,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::CLOSEST,
                                                  true,
                                                  true,
@@ -1476,8 +1482,7 @@ int main(int argc, char** argv)
                                                  scenario.str(),
                                                  bench_trials,
                                                  *checker,
-                                                 state_pairs,
-                                                 link_ids,
+                                                 split_states,
                                                  tesseract::collision::ContactTestType::ALL,
                                                  true,
                                                  true,
