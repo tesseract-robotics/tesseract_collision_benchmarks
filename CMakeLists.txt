@@ -47,10 +47,8 @@ target_include_directories(${PROJECT_NAME}_only PRIVATE "$<BUILD_INTERFACE:${CMA
 
 configure_package(NAMESPACE tesseract TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_only)
 
-# TESSERACT_ENABLE_TESTING, not BUILD_TESTING: the workspace build script passes the former, and
-# every sibling package gates on it. BUILD_TESTING happens to be ON in this package's cache only
-# because a dependency's config calls include(CTest) transitively, which is a side effect this
-# package should not depend on.
+# Gate on TESSERACT_ENABLE_TESTING, as sibling packages do. BUILD_TESTING is ON here only as a side
+# effect of a dependency calling include(CTest).
 if(TESSERACT_ENABLE_TESTING)
   enable_testing()
   add_test(NAME cli_contract COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/test/cli_contract.bash

@@ -66,6 +66,8 @@
 #include <random_numbers/random_numbers.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -74,8 +76,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <string>
-#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -369,7 +371,8 @@ bool managerSelected(const std::vector<std::string>& filters, const std::string&
  * consecutive sampled states, so the motion between two checks is a controlled fraction of the
  * SWEEP jump. It exists because a backend that warm-starts its narrowphase from the previous
  * check reads as fastest under REPEAT and slowest under SWEEP, and neither bound is what a
- * planner sees; the interpolation count selects a point between them. TRAJECTORY with one
+ * planner sees; the interpolation count nominally selects a point between them. The change in
+ * collision content described below can move a run outside that range. TRAJECTORY with one
  * waypoint per segment is SWEEP.
  *
  * The sampled states are all in collision, so a run's scenario label describes a population that
@@ -391,7 +394,8 @@ enum class DutyCycle : std::uint8_t
 struct DutyCycleSpec
 {
   DutyCycle cycle{ DutyCycle::SWEEP };
-  /** @brief Interpolation steps between consecutive sampled states. Ignored unless cycle is TRAJECTORY. */
+  /** @brief Interpolation steps between consecutive sampled states. Always 1 unless cycle is TRAJECTORY,
+   *  so trials / waypoints is the pass count under every cycle. */
   unsigned int waypoints{ 1 };
 };
 
@@ -415,13 +419,18 @@ std::string dutyCycleName(const DutyCycleSpec& spec)
 
 /** \brief Runs a collision detection benchmark and measures the time.
  *
+ *   \param csv_stream Stream the result row is written to
  *   \param name Name to give the benchmark
+ *   \param scenario Scenario label written to the CSV
  *   \param trials The number of repeated collision checks for each state
  *   \param checker Tesseract contact checker
- *   \param state A vector of collision object transforms
+ *   \param states Collision object transforms, one map per state
  *   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
  *   \param distance Turn on distance
- *   \param penetration Turn on penetration */
+ *   \param penetration Turn on penetration
+ *   \param is_physx Checker is the PhysX manager, which runs repeat as sweep
+ *   \param duty_cycle Repeat checks each state trials times in a row; any other cycle walks all
+ *                     states once per trial */
 void runTesseractCollisionDetection(std::ostream& csv_stream,
                                     const std::string& name,
                                     const std::string& scenario,
@@ -497,13 +506,18 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
 
 /** \brief Runs a continuous collision detection benchmark and measures the time.
  *
+ *   \param csv_stream Stream the result row is written to
  *   \param name Name to give the benchmark
+ *   \param scenario Scenario label written to the CSV
  *   \param trials The number of repeated collision checks for each state pair
  *   \param checker Tesseract continuous contact checker
  *   \param split_states Cast state pairs, already split into moving and static links
  *   \param test_type The tesseract contact test type (FIRST, ALL, CLOSEST)
  *   \param distance Turn on distance
- *   \param penetration Turn on penetration */
+ *   \param penetration Turn on penetration
+ *   \param clone_per_state Clone the checker for every state pair; honoured only under repeat
+ *   \param duty_cycle Repeat checks each pair trials times in a row; any other cycle walks all
+ *                     pairs once per trial */
 void runTesseractContinuousCollisionDetection(std::ostream& csv_stream,
                                               const std::string& name,
                                               const std::string& scenario,
@@ -601,7 +615,7 @@ int main(int argc, char** argv)
   bool clone_per_state = false;
   DutyCycleSpec duty_cycle;
   bool duty_cycle_explicit = false;
-  bool waypoints_explicit = false;
+  std::optional<unsigned int> waypoints;
   std::vector<std::string> manager_filters;
   // Applied to the two distance scenarios only; the contact-only and penetration scenarios are
   // defined by a zero margin and do not move with this.
@@ -625,39 +639,11 @@ int main(int argc, char** argv)
       return argv[++i];
     };
 
-    // Parse a flag's value as a number, reporting the offending text. The standard conversions
-    // throw, and an uncaught throw here would kill the run with no indication of which flag was
-    // wrong. Trailing characters are rejected too, so "10x" does not silently become 10. The
-    // caller passes the value in rather than the flag's hint, so a branch with a range check of
-    // its own still has the original text to quote.
-    auto parse_int = [&](const std::string& value) -> int {
-      try
+    // Parse a flag's value as a number, rejecting trailing characters so "10x" does not become 10.
+    auto parse_number = [&](const std::string& value, auto& out, const char* kind) {
+      if (!tesseract::common::toNumeric(value, out))
       {
-        std::size_t consumed = 0;
-        const int parsed = std::stoi(value, &consumed);
-        if (consumed != value.size())
-          throw std::invalid_argument("trailing characters");
-        return parsed;
-      }
-      catch (const std::exception&)
-      {
-        TESSERACT_LOG_ERROR("{} expects an integer, got '{}'.", arg, value);
-        std::exit(1);
-      }
-    };
-
-    auto parse_double = [&](const std::string& value) -> double {
-      try
-      {
-        std::size_t consumed = 0;
-        const double parsed = std::stod(value, &consumed);
-        if (consumed != value.size())
-          throw std::invalid_argument("trailing characters");
-        return parsed;
-      }
-      catch (const std::exception&)
-      {
-        TESSERACT_LOG_ERROR("{} expects a number, got '{}'.", arg, value);
+        TESSERACT_LOG_ERROR("{} expects {}, got '{}'.", arg, kind, value);
         std::exit(1);
       }
     };
@@ -682,7 +668,14 @@ int main(int argc, char** argv)
     }
     else if (arg == "--seed" || arg == "-s")
     {
-      seed = parse_int(require_value("Provide an integer seed."));
+      parse_number(require_value("Provide a non-negative integer seed."), seed, "an integer");
+      // A negative value is the "no seed given" sentinel, so accepting one would silently switch a
+      // run the caller meant to be reproducible to a random seed.
+      if (seed < 0)
+      {
+        TESSERACT_LOG_ERROR("--seed must be non-negative, got {}.", seed);
+        return 1;
+      }
     }
     else if (arg == "--clone")
     {
@@ -706,24 +699,26 @@ int main(int argc, char** argv)
     }
     else if (arg == "--waypoints" || arg == "-w")
     {
-      const int value = parse_int(require_value("Provide a positive integer."));
+      int value = 0;
+      parse_number(require_value("Provide a positive integer."), value, "an integer");
       if (value < 1)
       {
         TESSERACT_LOG_ERROR("--waypoints must be at least 1, got {}.", value);
         return 1;
       }
-      duty_cycle.waypoints = static_cast<unsigned int>(value);
-      waypoints_explicit = true;
+      waypoints = static_cast<unsigned int>(value);
     }
     else if (arg == "--margin")
     {
       const std::string value = require_value("Provide a non-negative distance in metres.");
-      const double parsed = parse_double(value);
+      double parsed = 0.0;
+      parse_number(value, parsed, "a number");
       // Rejects NaN and infinity as well as negatives: a margin that is not a real length would be
-      // written into the scenario label and mislabel every row the run produces.
+      // written into the scenario label and mislabel every row the run produces. The 1e6 m cap
+      // rejects finite values no collision margin could mean.
       if (!(parsed >= 0.0 && parsed < 1e6))
       {
-        TESSERACT_LOG_ERROR("--margin must be a finite, non-negative distance in metres, got '{}'.", value);
+        TESSERACT_LOG_ERROR("--margin must be a non-negative distance below 1e6 metres, got '{}'.", value);
         return 1;
       }
       distance_margin = parsed;
@@ -757,7 +752,7 @@ int main(int argc, char** argv)
                 << "  CSV_PATH        Output CSV file (default: tesseract_collision_benchmark.csv)\n"
                 << "  --mode/-m       Benchmark mode: " << mode_values << " (default: both)\n"
                 << "  --test-type/-t  Contact test type filter: " << test_type_values << " (default: all-types)\n"
-                << "  --seed/-s       Fixed RNG seed for reproducible robot states (default: time-based)\n"
+                << "  --seed/-s       Fixed non-negative RNG seed for reproducible states (default: random)\n"
                 << "  --manager/-M    Only benchmark managers whose name contains one of these comma separated,\n"
                 << "                  case insensitive substrings (default: all managers)\n"
                 << "  --clone         Clone manager per state pair in continuous mode (simulates TrajOpt).\n"
@@ -776,6 +771,7 @@ int main(int argc, char** argv)
                 << "                  continuous runs at different waypoint counts differ by up to " << trials << "\n"
                 << "                  checks. 1 reproduces sweep. (default: 1)\n"
                 << "  --margin        Collision margin for the two distance scenarios, in metres (default: 0.2).\n"
+                << "                  Must be non-negative and below 1e6.\n"
                 << "                  The contact-only and penetration scenarios always run at zero margin.\n"
                 << "                  The scenario label and the CSV carry the value actually used.\n"
                 << "  --help/-h       Show this help message and exit\n";
@@ -792,22 +788,35 @@ int main(int argc, char** argv)
     }
   }
 
-  const std::vector<std::string> all_manager_names{ "BulletDiscreteBVHManager", "BulletDiscreteSimpleManager",
-                                                    "FCLDiscreteBVHManager",    "CoalDiscreteBVHManager",
-                                                    "BulletCastBVHManager",     "CoalCastBVHManager" };
+  const bool run_discrete = (mode == "discrete" || mode == "both");
+  const bool run_continuous = (mode == "continuous" || mode == "both");
+
+  // Filters are checked against the managers the selected mode runs, so a filter naming only the
+  // other mode's managers is refused instead of producing a run that writes no rows.
+  std::vector<std::string> available_managers;
+  if (run_discrete)
+    available_managers.insert(available_managers.end(),
+                              { "BulletDiscreteBVHManager",
+                                "BulletDiscreteSimpleManager",
+                                "FCLDiscreteBVHManager",
+                                "CoalDiscreteBVHManager" });
+  if (run_continuous)
+    available_managers.insert(available_managers.end(), { "BulletCastBVHManager", "CoalCastBVHManager" });
+
   for (const std::string& filter : manager_filters)
   {
     const bool matches_any =
-        std::any_of(all_manager_names.begin(), all_manager_names.end(), [&filter](const std::string& manager_name) {
+        std::any_of(available_managers.begin(), available_managers.end(), [&filter](const std::string& manager_name) {
           return managerSelected({ filter }, manager_name);
         });
 
     if (!matches_any)
     {
-      TESSERACT_LOG_ERROR("No manager matches '{}'. Available managers: BulletDiscreteBVHManager, "
-                          "BulletDiscreteSimpleManager, FCLDiscreteBVHManager, CoalDiscreteBVHManager, "
-                          "BulletCastBVHManager, CoalCastBVHManager",
-                          filter);
+      std::string available_list;
+      for (const std::string& manager_name : available_managers)
+        available_list += (available_list.empty() ? "" : ", ") + manager_name;
+
+      TESSERACT_LOG_ERROR("No manager matches '{}' in --mode {}. Available managers: {}", filter, mode, available_list);
       return 1;
     }
   }
@@ -831,21 +840,19 @@ int main(int argc, char** argv)
   if (duty_cycle_implied_by_clone)
     duty_cycle.cycle = DutyCycle::REPEAT;
 
-  TESSERACT_LOG_INFO(
-      "Duty cycle: {}{}", dutyCycleName(duty_cycle), duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
-
   // --waypoints only means anything to trajectory. Refusing it under any other cycle keeps a run
   // from recording a duty cycle that ignored a flag the caller passed, including when --clone
   // demoted the cycle to repeat above.
-  if (waypoints_explicit && duty_cycle.cycle != DutyCycle::TRAJECTORY)
+  if (waypoints && duty_cycle.cycle != DutyCycle::TRAJECTORY)
   {
     TESSERACT_LOG_ERROR("--waypoints applies only to --duty-cycle trajectory, but the duty cycle is {}.",
                         dutyCycleName(duty_cycle));
     return 1;
   }
+  duty_cycle.waypoints = waypoints.value_or(1);
 
-  const bool run_discrete = (mode == "discrete" || mode == "both");
-  const bool run_continuous = (mode == "continuous" || mode == "both");
+  TESSERACT_LOG_INFO(
+      "Duty cycle: {}{}", dutyCycleName(duty_cycle), duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
 
   // Only continuous mode visits state pairs, so --clone only conflicts with an advancing duty
   // cycle when continuous mode will actually run.
@@ -858,10 +865,12 @@ int main(int argc, char** argv)
   }
 
   // Built once and interpolated into all four distance scenario labels, so a CSV can never report a
-  // margin the run did not use.
-  std::ostringstream margin_stream;
-  margin_stream << distance_margin;
-  const std::string margin_label = margin_stream.str() + " m";
+  // margin the run did not use. to_chars without a precision prints the shortest string that reads
+  // back as the same double: every digit the margin needs, and "0.2" for the default.
+  std::array<char, 32> margin_chars{};
+  const auto margin_end =
+      std::to_chars(margin_chars.data(), margin_chars.data() + margin_chars.size(), distance_margin).ptr;
+  const std::string margin_label = std::string(margin_chars.data(), margin_end) + " m";
 
   // Holding the check count equal across duty cycles is what makes their checks_per_second
   // comparable: a trajectory run walks states * waypoints configurations, so it gets
@@ -869,7 +878,7 @@ int main(int argc, char** argv)
   // pair fewer than it has states, so it falls one check per pass short of that count — trials
   // checks under sweep, trials / waypoints under trajectory — which leaves two continuous runs at
   // different waypoint counts up to trials checks apart.
-  if (duty_cycle.cycle == DutyCycle::TRAJECTORY && (trials % duty_cycle.waypoints) != 0)
+  if ((trials % duty_cycle.waypoints) != 0)
   {
     TESSERACT_LOG_ERROR("--waypoints {} does not divide the {} trials per state, so the run would not perform "
                         "the same number of checks as the other duty cycles.",
@@ -957,9 +966,7 @@ int main(int argc, char** argv)
   const std::size_t sampled_pair_count = t_sampled_states.empty() ? 0 : t_sampled_states.size() - 1;
 
   // Every duty cycle walks bench_states cyclically for bench_trials passes. Only the contents of
-  // that vector differ: the sampled states themselves, or a joint-space interpolation through
-  // them. Scenario strings quote the sampled-state counts, never the walked ones, so a trajectory
-  // run stays joinable with the runs it is being compared against.
+  // that vector differ: the sampled states themselves, or a joint-space interpolation through them.
   std::vector<tesseract::common::LinkIdTransformMap> t_trajectory_states;
   if (duty_cycle.cycle == DutyCycle::TRAJECTORY)
   {
@@ -974,16 +981,18 @@ int main(int argc, char** argv)
     // so that difference is visible rather than hidden behind a scenario label that only describes
     // the sampled set. Once per margin the run uses, because whether a waypoint has any contact
     // differs between them: the contact-only and penetration scenarios run at zero margin, the two
-    // distance scenarios at --margin. Two tests per waypoint, against the thousand trials each one
-    // carries.
+    // distance scenarios at --margin. Two tests per waypoint, where each benchmark call checks
+    // every waypoint trials / waypoints times. The survey uses the same backend that sampled the
+    // states, whichever managers --manager selects, so its counts depend only on the seed.
+    auto survey_checker = contact_checkers.front()->clone();
+    const tesseract::collision::ContactRequest survey_req(tesseract::collision::ContactTestType::FIRST);
+    tesseract::collision::ContactResultMap survey_res;
     auto count_in_collision = [&](double margin) {
-      auto survey_checker = contact_checkers.front()->clone();
       survey_checker->setDefaultCollisionMargin(margin);
-      const tesseract::collision::ContactRequest survey_req(tesseract::collision::ContactTestType::FIRST);
       std::size_t in_collision = 0;
       for (const auto& state : t_trajectory_states)
       {
-        tesseract::collision::ContactResultMap survey_res;
+        survey_res.clear();
         survey_checker->setCollisionObjectsTransform(state);
         survey_checker->contactTest(survey_res, survey_req);
         if (!survey_res.empty())
@@ -995,18 +1004,18 @@ int main(int argc, char** argv)
     const std::size_t collide_at_zero = count_in_collision(0.0);
     const std::size_t collide_at_margin = count_in_collision(distance_margin);
     TESSERACT_LOG_INFO("Expanded {} sampled states into {} trajectory waypoints, {} of them in collision at "
-                       "margin 0 and {} at margin {}",
+                       "margin 0 and {} at margin {} (surveyed with {})",
                        t_sampled_states.size(),
                        t_trajectory_states.size(),
                        collide_at_zero,
                        collide_at_margin,
-                       margin_label);
+                       margin_label,
+                       contact_checkers.front()->getName());
   }
 
   const std::vector<tesseract::common::LinkIdTransformMap>& bench_states =
       (duty_cycle.cycle == DutyCycle::TRAJECTORY) ? t_trajectory_states : t_sampled_states;
-  const unsigned int bench_trials =
-      (duty_cycle.cycle == DutyCycle::TRAJECTORY) ? (trials / duty_cycle.waypoints) : trials;
+  const unsigned int bench_trials = trials / duty_cycle.waypoints;
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
