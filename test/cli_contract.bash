@@ -127,6 +127,18 @@ else
   fail "trajectory run did not report collision counts for the walked waypoints. Got: $(grep Expanded <<<"$traj_survey")"
 fi
 
+# total_num_checks for a sweep continuous run is trials * pairs = 1000 * 49. Pinning it catches a
+# refactor that changes how many pairs the run walks. Read the column by name: the scenario column
+# is quoted and holds a comma, so awk -F, '{print $5}' returns checks_per_second instead.
+"$BIN" "$WORK/pairs.csv" --mode continuous --test-type first \
+  --manager CoalCastBVHManager --seed 42 >/dev/null 2>&1
+checks="$(csv_column "$WORK/pairs.csv" total_num_checks | sort -u)"
+if [[ "$checks" == "49000" ]]; then
+  pass "sweep continuous run walks 49 pairs for 1000 trials"
+else
+  fail "sweep continuous total_num_checks was '$(tr '\n' ',' <<<"$checks")', expected 49000 on every row"
+fi
+
 if [[ $failures -ne 0 ]]; then
   echo "$failures case(s) failed"
   exit 1
