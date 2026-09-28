@@ -575,6 +575,9 @@ int main(int argc, char** argv)
   DutyCycleSpec duty_cycle;
   bool duty_cycle_explicit = false;
   std::vector<std::string> manager_filters;
+  // Applied to the two distance scenarios only; the contact-only and penetration scenarios are
+  // defined by a zero margin and do not move with this.
+  double distance_margin = 0.2;
 
   const std::string mode_values = "discrete, continuous, or both";
   const std::string test_type_values = "first, closest, all, or all-types";
@@ -646,6 +649,19 @@ int main(int argc, char** argv)
       }
       duty_cycle.waypoints = static_cast<unsigned int>(value);
     }
+    else if (arg == "--margin")
+    {
+      const std::string value = require_value("Provide a non-negative distance in metres.");
+      const double parsed = std::stod(value);
+      // Rejects NaN and infinity as well as negatives: a margin that is not a real length would be
+      // written into the scenario label and mislabel every row the run produces.
+      if (!(parsed >= 0.0 && parsed < 1e6))
+      {
+        CONSOLE_BRIDGE_logError("--margin must be a finite, non-negative distance in metres, got '%s'.", value.c_str());
+        return 1;
+      }
+      distance_margin = parsed;
+    }
     else if (arg == "--manager" || arg == "-M")
     {
       const std::string value = require_value("Provide a comma separated list of manager name substrings.");
@@ -670,7 +686,8 @@ int main(int argc, char** argv)
     {
       std::cout << "Usage: " << argv[0]
                 << " [CSV_PATH] [--mode discrete|continuous|both] [--test-type first|closest|all|all-types] [--seed N] "
-                   "[--manager NAMES] [--clone] [--duty-cycle repeat|sweep|trajectory] [--waypoints N]\n"
+                   "[--manager NAMES] [--clone] [--duty-cycle repeat|sweep|trajectory] [--waypoints N] "
+                   "[--margin M]\n"
                 << "  CSV_PATH        Output CSV file (default: tesseract_collision_benchmark.csv)\n"
                 << "  --mode/-m       Benchmark mode: " << mode_values << " (default: both)\n"
                 << "  --test-type/-t  Contact test type filter: " << test_type_values << " (default: all-types)\n"
@@ -689,6 +706,9 @@ int main(int argc, char** argv)
                 << "  --waypoints/-w  Interpolated configurations per segment for --duty-cycle trajectory.\n"
                 << "                  Must divide " << trials << " so the total check count matches the other\n"
                 << "                  duty cycles. 1 reproduces sweep. (default: 1)\n"
+                << "  --margin        Collision margin for the two distance scenarios, in metres (default: 0.2).\n"
+                << "                  The contact-only and penetration scenarios always run at zero margin.\n"
+                << "                  The scenario label and the CSV carry the value actually used.\n"
                 << "  --help/-h       Show this help message and exit\n";
       return 0;
     }
@@ -758,6 +778,12 @@ int main(int argc, char** argv)
                             dutyCycleName(duty_cycle).c_str());
     return 1;
   }
+
+  // Built once and interpolated into all four distance scenario labels, so a CSV can never report a
+  // margin the run did not use.
+  std::ostringstream margin_stream;
+  margin_stream << distance_margin;
+  const std::string margin_label = margin_stream.str() + " m";
 
   // Holding the total check count equal across duty cycles is what makes their checks_per_second
   // comparable: a trajectory run walks states * waypoints configurations, so it gets
@@ -994,8 +1020,8 @@ int main(int argc, char** argv)
                              "-----");
 
     scenario.str("");
-    scenario << "Discrete: Distance (0.2 m) Enabled, " << states_in_collision << " out of " << t_sampled_states.size()
-             << " states in collision";
+    scenario << "Discrete: Distance (" << margin_label << ") Enabled, " << states_in_collision << " out of "
+             << t_sampled_states.size() << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform(
@@ -1004,7 +1030,7 @@ int main(int argc, char** argv)
                              "-----");
 
     for (auto& contact_checker : contact_checkers)
-      contact_checker->setDefaultCollisionMargin(0.2);
+      contact_checker->setDefaultCollisionMargin(distance_margin);
 
     for (auto& contact_checker : contact_checkers)
     {
@@ -1050,8 +1076,8 @@ int main(int argc, char** argv)
                              "-----");
 
     scenario.str("");
-    scenario << "Discrete: Distance (0.2 m) and Penetration Enabled, " << states_in_collision << " out of "
-             << t_sampled_states.size() << " states in collision";
+    scenario << "Discrete: Distance (" << margin_label << ") and Penetration Enabled, " << states_in_collision
+             << " out of " << t_sampled_states.size() << " states in collision";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform(
@@ -1249,10 +1275,10 @@ int main(int argc, char** argv)
 
     // Scenario 3: Continuous Distance Enabled
     for (auto& checker : cast_checkers)
-      checker->setDefaultCollisionMargin(0.2);
+      checker->setDefaultCollisionMargin(distance_margin);
 
     scenario.str("");
-    scenario << "Continuous: Distance (0.2 m) Enabled, " << state_pairs.size() << " state pairs";
+    scenario << "Continuous: Distance (" << margin_label << ") Enabled, " << state_pairs.size() << " state pairs";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform(
@@ -1307,7 +1333,8 @@ int main(int argc, char** argv)
 
     // Scenario 4: Continuous Distance and Penetration Enabled
     scenario.str("");
-    scenario << "Continuous: Distance (0.2 m) and Penetration Enabled, " << state_pairs.size() << " state pairs";
+    scenario << "Continuous: Distance (" << margin_label << ") and Penetration Enabled, " << state_pairs.size()
+             << " state pairs";
 
     CONSOLE_BRIDGE_logInform("Starting scenario: %s", scenario.str().c_str());
     CONSOLE_BRIDGE_logInform(

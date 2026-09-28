@@ -35,8 +35,11 @@ Four scenarios run, each at three contact test types (`FIRST`, `CLOSEST`, `ALL`)
 
 - `Contact Only` — collision/no-collision, zero margin
 - `Penetration Enabled` — also compute penetration depth
-- `Distance (0.2 m) Enabled` — 0.2 m margin, compute distances
+- `Distance (0.2 m) Enabled` — `--margin` metres (default 0.2), compute distances
 - `Distance (0.2 m) and Penetration Enabled` — both
+
+The two distance labels carry the margin the run actually used, so `--margin 0.001` writes
+`Distance (0.001 m) Enabled`. The first two scenarios are defined by a zero margin and never move.
 
 Continuous mode runs the same four over the *consecutive pairs* those states form. Every scenario
 label carries a `Discrete: ` or `Continuous: ` prefix saying which of the two it belongs to.
