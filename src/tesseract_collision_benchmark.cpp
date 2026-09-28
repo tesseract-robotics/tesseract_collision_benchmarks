@@ -39,6 +39,7 @@
 #include <moveit/collision_detection_fcl/collision_detector_allocator_fcl.h>
 #include <moveit/robot_model/robot_model.h>
 #include <moveit/utils/robot_model_test_utils.h>
+#include <tesseract/common/logging.h>
 #include <tesseract/common/resource_locator.h>
 #include <tesseract/common/stopwatch.h>
 #include <tesseract/common/types.h>
@@ -83,7 +84,7 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
                   const std::size_t num_objects,
                   CollisionObjectType type)
 {
-  CONSOLE_BRIDGE_logInform("Cluttering scene...");
+  TESSERACT_LOG_INFO("Cluttering scene...");
 
   auto num_generator = random_numbers::RandomNumberGenerator(123);
 
@@ -205,13 +206,13 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
     }
     else
     {
-      CONSOLE_BRIDGE_logInform("Object was in collision, remove");
+      TESSERACT_LOG_INFO("Object was in collision, remove");
       planning_scene->getWorldNonConst()->removeObject(name);
     }
     contact_checker->removeCollisionObject(name);
     i++;
   }
-  CONSOLE_BRIDGE_logInform("Cluttered the planning scene with %zu objects", added_objects);
+  TESSERACT_LOG_INFO("Cluttered the planning scene with {} objects", added_objects);
 }
 
 /** \brief Samples valid states of the robot which can be in collision if desired.
@@ -342,7 +343,7 @@ void runCollisionDetection(unsigned int trials,
   const double checks_per_second = static_cast<double>(trials * states.size()) / duration;
   const std::size_t total_num_checks = trials * states.size();
   const std::size_t contact_count = (res.collision && res.contact_count == 0) ? 1 : res.contact_count;
-  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  TESSERACT_LOG_INFO("{}, {:f}, {}, {}", desc, checks_per_second, total_num_checks, contact_count);
 
   // color collided objects red
   //  for (auto& contact : res.contacts)
@@ -429,12 +430,12 @@ void runTesseractCollisionDetection(const std::string& name,
   for (const auto& c : res)
     contact_count += c.second.size();
 
-  CONSOLE_BRIDGE_logInform("%s, %lf, %zu, %zu", desc.c_str(), checks_per_second, total_num_checks, contact_count);
+  TESSERACT_LOG_INFO("{}, {:f}, {}, {}", desc, checks_per_second, total_num_checks, contact_count);
 }
 
 int main(int /*argc*/, char** /*argv*/)
 {
-  console_bridge::setLogLevel(console_bridge::LogLevel::CONSOLE_BRIDGE_LOG_INFO);
+  tesseract::common::getLogger()->set_level(spdlog::level::info);
 
   moveit::core::RobotModelPtr robot_model;
   unsigned int trials = 1000;
@@ -499,7 +500,7 @@ int main(int /*argc*/, char** /*argv*/)
     contact_checker->setActiveCollisionObjects(link_ids);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting...");
+  TESSERACT_LOG_INFO("Starting...");
 
   sleep(1);
 
@@ -530,11 +531,11 @@ int main(int /*argc*/, char** /*argv*/)
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), %d "
-                           "out of %d states in collision",
-                           states_in_collision,
-                           50);
-  CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+  TESSERACT_LOG_INFO("Starting benchmark: Robot in cluttered world, in collision with world (Contact Only), {} "
+                     "out of {} states in collision",
+                     states_in_collision,
+                     50);
+  TESSERACT_LOG_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
   runCollisionDetection(trials,
                         planning_scene,
                         sampled_states,
@@ -593,11 +594,11 @@ int main(int /*argc*/, char** /*argv*/)
                                    is_physx);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world, %d out of %d states "
-                           "in collision",
-                           states_in_collision,
-                           50);
-  CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+  TESSERACT_LOG_INFO("Starting benchmark: Robot in cluttered world, in collision with world, {} out of {} states "
+                     "in collision",
+                     states_in_collision,
+                     50);
+  TESSERACT_LOG_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
   runCollisionDetection(trials,
                         planning_scene,
                         sampled_states,
@@ -656,11 +657,11 @@ int main(int /*argc*/, char** /*argv*/)
                                    is_physx);
   }
 
-  CONSOLE_BRIDGE_logInform("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, "
-                           "0.2m), %d out of %zu states in collision",
-                           states_in_collision,
-                           t_sampled_states.size());
-  CONSOLE_BRIDGE_logInform("Description, Checks Per Second, Total Num Checks, Num Contacts");
+  TESSERACT_LOG_INFO("Starting benchmark: Robot in cluttered world, in collision with world (Distance Enabled, "
+                     "0.2m), {} out of {} states in collision",
+                     states_in_collision,
+                     t_sampled_states.size());
+  TESSERACT_LOG_INFO("Description, Checks Per Second, Total Num Checks, Num Contacts");
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0.2);

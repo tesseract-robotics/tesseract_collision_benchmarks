@@ -16,7 +16,7 @@
 <!--  <depend>tesseract_collision_physx</depend>-->
   <depend>moveit_core</depend>
   <depend>random_numbers</depend>
-  <depend>libconsole-bridge-dev</depend>
+  <depend>spdlog</depend>
 
   <exec_depend>moveit_resources</exec_depend>
   <exec_depend>moveit_resources_panda_moveit_config</exec_depend>
