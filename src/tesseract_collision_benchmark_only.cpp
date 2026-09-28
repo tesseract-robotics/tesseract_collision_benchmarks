@@ -74,7 +74,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace tesseract::collision
 {
@@ -181,9 +184,13 @@ void clutterWorld(std::vector<tesseract::geometry::Geometry::ConstPtr>& shapes,
  *  \param desired_states Specifier for type for desired state
  *  \param num_states Number of desired states
  *  \param robot_states Result vector
+ *  \param robot_joint_values Joint values behind each entry of robot_states, same order and size.
+ *         Interpolating a state needs the joint values; the link transforms alone cannot be
+ *         interpolated into a reachable configuration.
  *  \return number of state in collision
  */
 int findStates(std::vector<tesseract::common::LinkIdTransformMap>& robot_states,
+               std::vector<tesseract::scene_graph::SceneState::JointValues>& robot_joint_values,
                RobotStateSelector desired_states,
                unsigned int num_states,
                const DiscreteContactManager::Ptr& contact_checker,
@@ -206,15 +213,20 @@ int findStates(std::vector<tesseract::common::LinkIdTransformMap>& robot_states,
         if (!t_res.empty())
         {
           robot_states.push_back(t_transforms);
+          robot_joint_values.push_back(t_env_state.joints);
           ++states_in_collision;
         }
         break;
       case RobotStateSelector::NOT_IN_COLLISION:
         if (t_res.empty())
+        {
           robot_states.push_back(t_transforms);
+          robot_joint_values.push_back(t_env_state.joints);
+        }
         break;
       case RobotStateSelector::RANDOM:
         robot_states.push_back(t_transforms);
+        robot_joint_values.push_back(t_env_state.joints);
         if (!t_res.empty())
           ++states_in_collision;
         break;
@@ -223,6 +235,45 @@ int findStates(std::vector<tesseract::common::LinkIdTransformMap>& robot_states,
   }
 
   return states_in_collision;
+}
+
+/** \brief Expands sampled states into a cyclic joint-space path visiting each of them in turn.
+ *
+ *  Segment i runs from sampled state i to state i+1, the last wrapping back to the first, and
+ *  contributes @p waypoints evenly spaced configurations starting at state i. The result therefore
+ *  contains every sampled state and has size states * waypoints, and walking it cyclically returns
+ *  to its start. Interpolation is in joint space, so every waypoint is a configuration the robot
+ *  can actually hold.
+ *
+ *  \param sampled_joint_values Joint values of the sampled states, in order
+ *  \param waypoints Configurations per segment; 1 reproduces the sampled states themselves
+ *  \param state_solver Solver used to run forward kinematics on each interpolated configuration */
+std::vector<tesseract::common::LinkIdTransformMap>
+buildTrajectoryStates(const std::vector<tesseract::scene_graph::SceneState::JointValues>& sampled_joint_values,
+                      unsigned int waypoints,
+                      const tesseract::scene_graph::StateSolver& state_solver)
+{
+  std::vector<tesseract::common::LinkIdTransformMap> trajectory;
+  const std::size_t num_sampled = sampled_joint_values.size();
+  trajectory.reserve(num_sampled * waypoints);
+
+  tesseract::scene_graph::SceneState::JointValues interpolated;
+  for (std::size_t i = 0; i < num_sampled; ++i)
+  {
+    const auto& from = sampled_joint_values[i];
+    const auto& to = sampled_joint_values[(i + 1) % num_sampled];
+    for (unsigned int k = 0; k < waypoints; ++k)
+    {
+      const double t = static_cast<double>(k) / static_cast<double>(waypoints);
+      interpolated.clear();
+      for (const auto& [joint_id, value] : from)
+        interpolated[joint_id] = value + (t * (to.at(joint_id) - value));
+
+      trajectory.push_back(state_solver.getState(interpolated).link_transforms);
+    }
+  }
+
+  return trajectory;
 }
 }  // namespace tesseract::collision
 
@@ -256,15 +307,46 @@ bool managerSelected(const std::vector<std::string>& filters, const std::string&
  * before every check. The sampled states are independent configurations rather than
  * successive trajectory waypoints, so SWEEP is an upper bound on update cost, not a
  * simulation of one.
+ *
+ * TRAJECTORY also advances before every check, but along joint-space interpolations between
+ * consecutive sampled states, so the motion between two checks is a controlled fraction of the
+ * SWEEP jump. It exists because a backend that warm-starts its narrowphase from the previous
+ * check reads as fastest under REPEAT and slowest under SWEEP, and neither bound is what a
+ * planner sees; the interpolation count selects a point between them. TRAJECTORY with one
+ * waypoint per segment is SWEEP.
  */
 enum class DutyCycle : std::uint8_t
 {
   REPEAT,
-  SWEEP
+  SWEEP,
+  TRAJECTORY
 };
 
-/** \brief Lowercase name for a DutyCycle, as written to the CSV and shown in --help/log text. */
-const char* dutyCycleName(DutyCycle duty_cycle) { return duty_cycle == DutyCycle::SWEEP ? "sweep" : "repeat"; }
+/** @brief A duty cycle together with the interpolation count TRAJECTORY needs. */
+struct DutyCycleSpec
+{
+  DutyCycle cycle{ DutyCycle::SWEEP };
+  /** @brief Interpolation steps between consecutive sampled states. Ignored unless cycle is TRAJECTORY. */
+  unsigned int waypoints{ 1 };
+};
+
+/** \brief Lowercase name for a duty cycle, as written to the CSV and shown in --help/log text.
+ *
+ *  TRAJECTORY carries its waypoint count, because two trajectory runs at different step sizes are
+ *  not comparable and the CSV records one duty cycle per file. */
+std::string dutyCycleName(const DutyCycleSpec& spec)
+{
+  switch (spec.cycle)
+  {
+    case DutyCycle::SWEEP:
+      return "sweep";
+    case DutyCycle::TRAJECTORY:
+      return "trajectory-" + std::to_string(spec.waypoints);
+    case DutyCycle::REPEAT:
+    default:
+      return "repeat";
+  }
+}
 
 /** \brief Runs a collision detection benchmark and measures the time.
  *
@@ -285,7 +367,7 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
                                     bool distance,
                                     bool penetration,
                                     bool is_physx,
-                                    DutyCycle duty_cycle)
+                                    const DutyCycleSpec& duty_cycle)
 {
   //  collision_detection::AllowedCollisionMatrix acm{ collision_detection::AllowedCollisionMatrix(
   //      scene->getRobotModel()->getLinkModelNames(), true) };
@@ -303,9 +385,10 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
 
   // Physx links go to sleep if they have not moved in 3-4 contact test requests, so physx
   // must see a transform update before every check.
-  const bool sweep = is_physx || (duty_cycle == DutyCycle::SWEEP);
+  const DutyCycleSpec effective_duty_cycle =
+      (is_physx && duty_cycle.cycle == DutyCycle::REPEAT) ? DutyCycleSpec{ DutyCycle::SWEEP, 1 } : duty_cycle;
 
-  if (sweep)
+  if (effective_duty_cycle.cycle != DutyCycle::REPEAT)
   {
     for (unsigned int i = 0; i < trials; ++i)
     {
@@ -340,7 +423,6 @@ void runTesseractCollisionDetection(std::ostream& csv_stream,
   for (const auto& c : res)
     contact_count += c.second.size();
 
-  const DutyCycle effective_duty_cycle = sweep ? DutyCycle::SWEEP : DutyCycle::REPEAT;
   csv_stream << std::quoted(scenario) << "," << std::quoted(name) << "," << std::quoted(ct) << "," << checks_per_second
              << "," << total_num_checks << "," << contact_count << ","
              << std::quoted(dutyCycleName(effective_duty_cycle)) << "\n";
@@ -371,7 +453,7 @@ void runTesseractContinuousCollisionDetection(
     bool distance,
     bool penetration,
     bool clone_per_state,
-    DutyCycle duty_cycle)
+    const DutyCycleSpec& duty_cycle)
 {
   std::string ct = tesseract::collision::ContactTestTypeStrings.at(static_cast<std::size_t>(test_type));
   std::string desc = name + "(" + ct + ")";
@@ -384,45 +466,76 @@ void runTesseractContinuousCollisionDetection(
   // Pre-compute active link ID set for fast lookup
   std::unordered_set<tesseract::common::LinkId> active_link_set(active_links.begin(), active_links.end());
 
-  auto apply_state = [&active_link_set](tesseract::collision::ContinuousContactManager& mgr,
-                                        const tesseract::common::LinkIdTransformMap& pose1,
-                                        const tesseract::common::LinkIdTransformMap& pose2) {
-    // Active links get cast (moving) transforms; others get static transforms
+  // Active links carry a cast (moving) transform, everything else a static one. The split is done
+  // once here rather than per check: a caller such as TrajOpt already holds its transforms in this
+  // shape, so splitting inside the timed loop would charge every backend for work it does not do.
+  // Parallel arrays rather than maps: the manager looks each id up regardless, so the map forms only
+  // add a hash lookup per link to find the second pose.
+  struct SplitState
+  {
+    std::vector<tesseract::common::LinkId> cast_ids;
+    tesseract::common::VectorIsometry3d cast_pose1;
+    tesseract::common::VectorIsometry3d cast_pose2;
+    std::vector<tesseract::common::LinkId> static_ids;
+    tesseract::common::VectorIsometry3d static_poses;
+  };
+  std::vector<SplitState> split_states;
+  split_states.reserve(state_pairs.size());
+  for (const auto& [pose1, pose2] : state_pairs)
+  {
+    SplitState split;
     for (const auto& tf : pose1)
     {
       if (active_link_set.count(tf.first) != 0)
-        mgr.setCollisionObjectsTransform(tf.first, tf.second, pose2.at(tf.first));
+      {
+        split.cast_ids.push_back(tf.first);
+        split.cast_pose1.push_back(tf.second);
+        split.cast_pose2.push_back(pose2.at(tf.first));
+      }
       else
-        mgr.setCollisionObjectsTransform(tf.first, tf.second);
+      {
+        split.static_ids.push_back(tf.first);
+        split.static_poses.push_back(tf.second);
+      }
     }
+    split_states.push_back(std::move(split));
+  }
+
+  auto apply_state = [](tesseract::collision::ContinuousContactManager& mgr, const SplitState& split) {
+    // Two bulk calls rather than one per link: a manager that defers its broadphase update to the end
+    // of a call then refits once per call, not once per link.
+    if (!split.static_ids.empty())
+      mgr.setCollisionObjectsTransform(split.static_ids, split.static_poses);
+    if (!split.cast_ids.empty())
+      mgr.setCollisionObjectsTransform(split.cast_ids, split.cast_pose1, split.cast_pose2);
   };
 
   tesseract::common::Stopwatch stopwatch;
   stopwatch.start();
 
-  if (duty_cycle == DutyCycle::SWEEP)
+  if (duty_cycle.cycle != DutyCycle::REPEAT)
   {
     // This branch never honours clone_per_state; it always reuses the single incoming checker.
-    // That is safe only because main() rejects --clone together with --duty-cycle sweep, so
+    // That is safe only because main() rejects --clone together with an advancing duty cycle, so
     // clone_per_state is never true here.
     for (unsigned int i = 0; i < trials; ++i)
     {
-      for (const auto& [pose1, pose2] : state_pairs)
+      for (const auto& split : split_states)
       {
         res.clear();
-        apply_state(checker, pose1, pose2);
+        apply_state(checker, split);
         checker.contactTest(res, req);
       }
     }
   }
   else
   {
-    for (const auto& [pose1, pose2] : state_pairs)
+    for (const auto& split : split_states)
     {
       auto cloned = clone_per_state ? checker.clone() : nullptr;
       auto& active_checker = clone_per_state ? *cloned : checker;
 
-      apply_state(active_checker, pose1, pose2);
+      apply_state(active_checker, split);
       for (unsigned int i = 0; i < trials; ++i)
       {
         res.clear();
@@ -459,13 +572,13 @@ int main(int argc, char** argv)
   std::string test_type = "all-types";
   int seed = -1;
   bool clone_per_state = false;
-  DutyCycle duty_cycle = DutyCycle::SWEEP;
+  DutyCycleSpec duty_cycle;
   bool duty_cycle_explicit = false;
   std::vector<std::string> manager_filters;
 
   const std::string mode_values = "discrete, continuous, or both";
   const std::string test_type_values = "first, closest, all, or all-types";
-  const std::string duty_cycle_values = "repeat or sweep";
+  const std::string duty_cycle_values = "repeat, sweep, or trajectory";
 
   for (int i = 1; i < argc; ++i)
   {
@@ -512,14 +625,26 @@ int main(int argc, char** argv)
       const std::string value = require_value("Use: " + duty_cycle_values);
       duty_cycle_explicit = true;
       if (value == "repeat")
-        duty_cycle = DutyCycle::REPEAT;
+        duty_cycle.cycle = DutyCycle::REPEAT;
       else if (value == "sweep")
-        duty_cycle = DutyCycle::SWEEP;
+        duty_cycle.cycle = DutyCycle::SWEEP;
+      else if (value == "trajectory")
+        duty_cycle.cycle = DutyCycle::TRAJECTORY;
       else
       {
         CONSOLE_BRIDGE_logError("Unknown duty cycle '%s'. Expected %s.", value.c_str(), duty_cycle_values.c_str());
         return 1;
       }
+    }
+    else if (arg == "--waypoints" || arg == "-w")
+    {
+      const int value = std::stoi(require_value("Provide a positive integer."));
+      if (value < 1)
+      {
+        CONSOLE_BRIDGE_logError("--waypoints must be at least 1, got %d.", value);
+        return 1;
+      }
+      duty_cycle.waypoints = static_cast<unsigned int>(value);
     }
     else if (arg == "--manager" || arg == "-M")
     {
@@ -545,7 +670,7 @@ int main(int argc, char** argv)
     {
       std::cout << "Usage: " << argv[0]
                 << " [CSV_PATH] [--mode discrete|continuous|both] [--test-type first|closest|all|all-types] [--seed N] "
-                   "[--manager NAMES] [--clone] [--duty-cycle repeat|sweep]\n"
+                   "[--manager NAMES] [--clone] [--duty-cycle repeat|sweep|trajectory] [--waypoints N]\n"
                 << "  CSV_PATH        Output CSV file (default: tesseract_collision_benchmark.csv)\n"
                 << "  --mode/-m       Benchmark mode: " << mode_values << " (default: both)\n"
                 << "  --test-type/-t  Contact test type filter: " << test_type_values << " (default: all-types)\n"
@@ -557,8 +682,13 @@ int main(int argc, char** argv)
                 << "                  even though cloning itself only happens in continuous mode) unless\n"
                 << "                  --duty-cycle is given explicitly, since sweep would clone once per trial\n"
                 << "                  instead of once per state pair.\n"
-                << "  --duty-cycle/-d Transform update frequency: repeat (set once per sampled state) or\n"
-                << "                  sweep (advance the state before every check) (default: sweep)\n"
+                << "  --duty-cycle/-d Transform update frequency: repeat (set once per sampled state),\n"
+                << "                  sweep (advance to the next sampled state before every check), or\n"
+                << "                  trajectory (advance along a joint-space interpolation between\n"
+                << "                  consecutive sampled states before every check) (default: sweep)\n"
+                << "  --waypoints/-w  Interpolated configurations per segment for --duty-cycle trajectory.\n"
+                << "                  Must divide " << trials << " so the total check count matches the other\n"
+                << "                  duty cycles. 1 reproduces sweep. (default: 1)\n"
                 << "  --help/-h       Show this help message and exit\n";
       return 0;
     }
@@ -610,20 +740,34 @@ int main(int argc, char** argv)
   // run under one labelled duty cycle is worth more than avoiding this surprise.
   const bool duty_cycle_implied_by_clone = clone_per_state && !duty_cycle_explicit;
   if (duty_cycle_implied_by_clone)
-    duty_cycle = DutyCycle::REPEAT;
+    duty_cycle.cycle = DutyCycle::REPEAT;
 
-  CONSOLE_BRIDGE_logInform(
-      "Duty cycle: %s%s", dutyCycleName(duty_cycle), duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
+  CONSOLE_BRIDGE_logInform("Duty cycle: %s%s",
+                           dutyCycleName(duty_cycle).c_str(),
+                           duty_cycle_implied_by_clone ? " (implied by --clone)" : "");
 
   const bool run_discrete = (mode == "discrete" || mode == "both");
   const bool run_continuous = (mode == "continuous" || mode == "both");
 
-  // Only continuous mode visits state pairs, so --clone only conflicts with --duty-cycle sweep
-  // when continuous mode will actually run.
-  if (run_continuous && duty_cycle == DutyCycle::SWEEP && clone_per_state)
+  // Only continuous mode visits state pairs, so --clone only conflicts with an advancing duty
+  // cycle when continuous mode will actually run.
+  if (run_continuous && duty_cycle.cycle != DutyCycle::REPEAT && clone_per_state)
   {
-    CONSOLE_BRIDGE_logError("--clone and --duty-cycle sweep are mutually exclusive: sweep visits every state "
-                            "pair once per trial, so cloning per visit would dominate the measurement.");
+    CONSOLE_BRIDGE_logError("--clone and --duty-cycle %s are mutually exclusive: an advancing duty cycle visits "
+                            "every state pair once per trial, so cloning per visit would dominate the measurement.",
+                            dutyCycleName(duty_cycle).c_str());
+    return 1;
+  }
+
+  // Holding the total check count equal across duty cycles is what makes their checks_per_second
+  // comparable: a trajectory run walks states * waypoints configurations, so it gets
+  // proportionally fewer passes over them.
+  if (duty_cycle.cycle == DutyCycle::TRAJECTORY && (trials % duty_cycle.waypoints) != 0)
+  {
+    CONSOLE_BRIDGE_logError("--waypoints %u does not divide the %u trials per state, so the run would not perform "
+                            "the same number of checks as the other duty cycles.",
+                            duty_cycle.waypoints,
+                            trials);
     return 1;
   }
 
@@ -689,7 +833,9 @@ int main(int argc, char** argv)
   sleep(1);
 
   std::vector<tesseract::common::LinkIdTransformMap> t_sampled_states;
+  std::vector<tesseract::scene_graph::SceneState::JointValues> t_sampled_joint_values;
   int states_in_collision = findStates(t_sampled_states,
+                                       t_sampled_joint_values,
                                        tesseract::collision::RobotStateSelector::IN_COLLISION,
                                        num_states,
                                        contact_checkers.front()->clone(),
@@ -697,6 +843,28 @@ int main(int argc, char** argv)
 
   for (auto& s : t_sampled_states)
     s.erase("world");
+
+  // Every duty cycle walks bench_states cyclically for bench_trials passes. Only the contents of
+  // that vector differ: the sampled states themselves, or a joint-space interpolation through
+  // them. The scenario strings keep quoting the sampled-state count, so a trajectory run stays
+  // joinable with the runs it is being compared against.
+  std::vector<tesseract::common::LinkIdTransformMap> t_trajectory_states;
+  if (duty_cycle.cycle == DutyCycle::TRAJECTORY)
+  {
+    t_trajectory_states = tesseract::collision::buildTrajectoryStates(
+        t_sampled_joint_values, duty_cycle.waypoints, *tesseract_state_solver);
+    for (auto& s : t_trajectory_states)
+      s.erase("world");
+
+    CONSOLE_BRIDGE_logInform("Expanded %zu sampled states into %zu trajectory waypoints",
+                             t_sampled_states.size(),
+                             t_trajectory_states.size());
+  }
+
+  const std::vector<tesseract::common::LinkIdTransformMap>& bench_states =
+      (duty_cycle.cycle == DutyCycle::TRAJECTORY) ? t_trajectory_states : t_sampled_states;
+  const unsigned int bench_trials =
+      (duty_cycle.cycle == DutyCycle::TRAJECTORY) ? (trials / duty_cycle.waypoints) : trials;
 
   for (auto& contact_checker : contact_checkers)
     contact_checker->setDefaultCollisionMargin(0);
@@ -736,9 +904,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::FIRST,
                                        false,
                                        false,
@@ -748,9 +916,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::CLOSEST,
                                        false,
                                        false,
@@ -760,9 +928,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::ALL,
                                        false,
                                        false,
@@ -789,9 +957,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::FIRST,
                                        false,
                                        true,
@@ -801,9 +969,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::CLOSEST,
                                        false,
                                        true,
@@ -813,9 +981,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::ALL,
                                        false,
                                        true,
@@ -845,9 +1013,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::FIRST,
                                        true,
                                        false,
@@ -857,9 +1025,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::CLOSEST,
                                        true,
                                        false,
@@ -869,9 +1037,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::ALL,
                                        true,
                                        false,
@@ -898,9 +1066,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::FIRST,
                                        true,
                                        true,
@@ -910,9 +1078,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::CLOSEST,
                                        true,
                                        true,
@@ -922,9 +1090,9 @@ int main(int argc, char** argv)
         runTesseractCollisionDetection(csv_file,
                                        contact_checker->getName(),
                                        scenario.str(),
-                                       trials,
+                                       bench_trials,
                                        *contact_checker,
-                                       t_sampled_states,
+                                       bench_states,
                                        tesseract::collision::ContactTestType::ALL,
                                        true,
                                        true,
@@ -955,10 +1123,12 @@ int main(int argc, char** argv)
       checker->setActiveCollisionObjects(link_ids);
     }
 
-    // Build state pairs from consecutive sampled states
+    // Build state pairs from consecutive states of whichever vector this duty cycle walks. Under
+    // trajectory that shortens the swept volume as well as the jump between checks, which is what a
+    // cast check against consecutive trajectory waypoints actually looks like.
     std::vector<std::pair<tesseract::common::LinkIdTransformMap, tesseract::common::LinkIdTransformMap>> state_pairs;
-    for (std::size_t i = 0; i + 1 < t_sampled_states.size(); ++i)
-      state_pairs.emplace_back(t_sampled_states[i], t_sampled_states[i + 1]);
+    for (std::size_t i = 0; i + 1 < bench_states.size(); ++i)
+      state_pairs.emplace_back(bench_states[i], bench_states[i + 1]);
 
     CONSOLE_BRIDGE_logInform("Starting continuous collision benchmarks with %zu state pairs", state_pairs.size());
 
@@ -983,7 +1153,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -996,7 +1166,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1009,7 +1179,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1038,7 +1208,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1051,7 +1221,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1064,7 +1234,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1077,7 +1247,7 @@ int main(int argc, char** argv)
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
                              "-----");
 
-    // Scenario 3: Continuous Distance (0.2 m) Enabled
+    // Scenario 3: Continuous Distance Enabled
     for (auto& checker : cast_checkers)
       checker->setDefaultCollisionMargin(0.2);
 
@@ -1096,7 +1266,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1109,7 +1279,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1122,7 +1292,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1135,7 +1305,7 @@ int main(int argc, char** argv)
     CONSOLE_BRIDGE_logInform("-----------------------------------------+-------------------+------------------+--------"
                              "-----");
 
-    // Scenario 4: Continuous Distance (0.2 m) and Penetration Enabled
+    // Scenario 4: Continuous Distance and Penetration Enabled
     scenario.str("");
     scenario << "Continuous: Distance (0.2 m) and Penetration Enabled, " << state_pairs.size() << " state pairs";
 
@@ -1151,7 +1321,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1164,7 +1334,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
@@ -1177,7 +1347,7 @@ int main(int argc, char** argv)
         runTesseractContinuousCollisionDetection(csv_file,
                                                  checker->getName(),
                                                  scenario.str(),
-                                                 trials,
+                                                 bench_trials,
                                                  *checker,
                                                  state_pairs,
                                                  link_ids,
